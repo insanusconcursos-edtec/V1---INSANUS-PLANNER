@@ -1,975 +1,1359 @@
 import React, { useState, useEffect } from 'react';
-import { User, StudyPlan, Discipline, Subject, Goal, Cycle, Folder, SubGoal, GoalType } from '../types';
+import { User, StudyPlan, Folder, Discipline, Subject, Goal, SubGoal, Cycle, CycleItem, EditalDiscipline, EditalTopic, PlanCategory } from '../types';
 import { Icon } from '../components/Icons';
 import { uuid } from '../constants';
-import { fetchUsersFromDB, saveUserToDB, deleteUserFromDB, fetchPlansFromDB, savePlanToDB } from '../services/db';
+import { fetchUsersFromDB, saveUserToDB, deleteUserFromDB, fetchPlansFromDB, savePlanToDB, deletePlanFromDB, resetFullDatabase } from '../services/db';
+import { uploadFileToStorage } from '../services/storage';
 
-// --- Users Manager ---
-const UsersManager = () => {
-  const [users, setUsers] = useState<User[]>([]);
-  const [newUser, setNewUser] = useState({ name: '', email: '', cpf: '', password: '' });
-  const [filter, setFilter] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [plans, setPlans] = useState<StudyPlan[]>([]);
+// --- COMPONENTS HELPER ---
 
-  useEffect(() => {
-    loadData();
-  }, []);
+interface SafeDeleteBtnProps {
+    onDelete: () => void;
+    label?: string;
+    className?: string;
+}
 
-  const loadData = async () => {
-      setLoading(true);
-      const [dbUsers, dbPlans] = await Promise.all([fetchUsersFromDB(), fetchPlansFromDB()]);
-      setUsers(dbUsers);
-      setPlans(dbPlans);
-      setLoading(false);
-  };
+const SafeDeleteBtn: React.FC<SafeDeleteBtnProps> = ({ onDelete, label = "", className = "" }) => {
+    const [confirming, setConfirming] = useState(false);
 
-  const handleAddUser = async () => {
-    if (!newUser.name || !newUser.email) return alert("Preencha campos obrigatórios");
-    
-    const user: User = {
-      id: uuid(),
-      name: newUser.name,
-      email: newUser.email,
-      cpf: newUser.cpf,
-      level: 'iniciante',
-      isAdmin: false,
-      allowedPlans: [],
-      planExpirations: {},
-      routine: { days: {} },
-      progress: {
-        completedGoalIds: [],
-        completedRevisionIds: [],
-        totalStudySeconds: 0,
-        planStudySeconds: {}
-      },
-      ...({ tempPassword: newUser.password }) as any
-    };
-
-    setLoading(true);
-    await saveUserToDB(user);
-    await loadData(); // Reload to refresh
-    setNewUser({ name: '', email: '', cpf: '', password: '' });
-  };
-
-  const handleDelete = async (id: string) => {
-    if (confirm('Excluir usuário permanentemente?')) {
-        setLoading(true);
-        await deleteUserFromDB(id);
-        await loadData();
-    }
-  };
-
-  const togglePlanAccess = async (userId: string, planId: string) => {
-    const userToUpdate = users.find(u => u.id === userId);
-    if (!userToUpdate) return;
-
-    // Safety check for undefined allowedPlans
-    const currentAllowed = userToUpdate.allowedPlans || [];
-    const hasAccess = currentAllowed.includes(planId);
-    
-    const updatedUser = {
-        ...userToUpdate,
-        allowedPlans: hasAccess ? currentAllowed.filter(pid => pid !== planId) : [...currentAllowed, planId]
-    };
-
-    // Optimistic update
-    setUsers(users.map(u => u.id === userId ? updatedUser : u));
-    
-    // Background Save
-    await saveUserToDB(updatedUser);
-  };
-
-  const filtered = users.filter(u => 
-    u.name.toLowerCase().includes(filter.toLowerCase()) || 
-    u.email.toLowerCase().includes(filter.toLowerCase()) || 
-    u.cpf.includes(filter)
-  );
-
-  return (
-    <div className="p-8 h-full overflow-y-auto">
-      <div className="max-w-7xl mx-auto space-y-8">
-        <div className="flex justify-between items-end border-b border-white/10 pb-4">
-            <h2 className="text-3xl font-black text-white uppercase tracking-tighter">Gestão de <span className="text-insanus-red">Usuários</span></h2>
-            <div className="text-xs font-mono text-gray-500">
-                {loading ? <span className="animate-pulse text-insanus-red">SINCRONIZANDO...</span> : `TOTAL: ${users.length}`}
-            </div>
-        </div>
-        
-        {/* Create User */}
-        <div className="glass p-6 rounded-xl border-l-4 border-insanus-red">
-            <h3 className="mb-4 font-bold text-gray-300 text-sm uppercase tracking-wider">Novo Cadastro</h3>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-            <input className="bg-black/50 p-3 rounded border border-white/10 focus:border-insanus-red focus:outline-none transition-colors" placeholder="Nome Completo" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} />
-            <input className="bg-black/50 p-3 rounded border border-white/10 focus:border-insanus-red focus:outline-none transition-colors" placeholder="CPF (000.000.000-00)" value={newUser.cpf} onChange={e => setNewUser({...newUser, cpf: e.target.value})} />
-            <input className="bg-black/50 p-3 rounded border border-white/10 focus:border-insanus-red focus:outline-none transition-colors" placeholder="E-mail" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} />
-            <input className="bg-black/50 p-3 rounded border border-white/10 focus:border-insanus-red focus:outline-none transition-colors" placeholder="Senha Padrão" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} />
-            <button onClick={handleAddUser} disabled={loading} className="bg-insanus-red hover:bg-red-600 text-white p-3 rounded font-bold shadow-neon transition-all disabled:opacity-50">CADASTRAR</button>
-            </div>
-        </div>
-
-        {/* List */}
-        <div className="space-y-4">
-            <input className="w-full bg-black/50 p-4 rounded-xl border border-white/10 focus:border-insanus-red focus:outline-none text-lg" placeholder="Pesquisar aluno..." value={filter} onChange={e => setFilter(e.target.value)} />
-            <div className="grid gap-3">
-            {filtered.map(u => (
-                <div key={u.id} className="glass hover:bg-white/5 border border-white/5 p-4 rounded-lg flex flex-col md:flex-row justify-between items-center gap-4 transition-all duration-300">
-                    <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded bg-gradient-to-br from-gray-800 to-black border border-white/10 flex items-center justify-center font-bold text-gray-500">
-                            {u.name.charAt(0)}
-                        </div>
-                        <div>
-                            <div className="font-bold text-white text-lg">{u.name}</div>
-                            <div className="text-xs font-mono text-gray-500">{u.email} <span className="text-gray-700">|</span> {u.cpf}</div>
-                        </div>
-                    </div>
-                    
-                    <div className="flex flex-col md:flex-row items-center gap-4">
-                        <div className="flex gap-2">
-                            {plans.map((p: StudyPlan) => (
-                                <button 
-                                    key={p.id}
-                                    onClick={() => togglePlanAccess(u.id, p.id)}
-                                    className={`px-3 py-1 text-[10px] uppercase font-bold tracking-wider rounded border transition-all ${u.allowedPlans?.includes(p.id) ? 'bg-insanus-red/20 border-insanus-red text-insanus-red shadow-[0_0_10px_rgba(255,31,31,0.2)]' : 'bg-black/50 border-white/10 text-gray-600 hover:border-gray-500'}`}
-                                >
-                                    {p.name}
-                                </button>
-                            ))}
-                        </div>
-                        <div className="h-8 w-px bg-white/10 hidden md:block"></div>
-                        <button onClick={() => handleDelete(u.id)} className="text-gray-600 hover:text-red-500 p-2"><Icon.Trash className="w-5 h-5" /></button>
-                    </div>
-                </div>
-            ))}
-            </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// --- Plan Editor Helpers ---
-
-const PRESET_COLORS = [
-    { label: 'Insanus Red', value: '#FF1F1F' },
-    { label: 'Blue', value: '#3B82F6' },
-    { label: 'Green', value: '#10B981' },
-    // Removed Yellow
-    { label: 'Purple', value: '#A855F7' },
-    { label: 'Pink', value: '#EC4899' },
-    { label: 'Orange', value: '#F97316' },
-    { label: 'Cyan', value: '#06B6D4' },
-];
-
-const GoalEditor = ({ goal, onChange, onClose }: { goal: Goal, onChange: (g: Goal) => void, onClose: () => void }) => {
-    const handleChange = (field: keyof Goal, value: any) => {
-        onChange({ ...goal, [field]: value });
-    };
-
-    const addSubGoal = () => {
-        const newSub: SubGoal = { id: uuid(), title: 'Nova Aula', link: '', duration: 30 };
-        handleChange('subGoals', [...(goal.subGoals || []), newSub]);
-    };
-
-    const updateSubGoal = (idx: number, field: keyof SubGoal, val: any) => {
-        const subs = [...(goal.subGoals || [])];
-        subs[idx] = { ...subs[idx], [field]: val };
-        handleChange('subGoals', subs);
-    };
-
-    const removeSubGoal = (idx: number) => {
-        const subs = [...(goal.subGoals || [])];
-        subs.splice(idx, 1);
-        handleChange('subGoals', subs);
-    };
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 animate-fade-in">
-            <div className="bg-insanus-card border border-white/10 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col">
-                <div className="p-6 border-b border-white/10 flex justify-between items-center sticky top-0 bg-insanus-card z-10">
-                    <div>
-                        <span className="text-xs font-mono text-insanus-red uppercase tracking-widest">Editor de Meta</span>
-                        <h3 className="text-2xl font-black text-white">{goal.type.replace('_', ' ')}</h3>
-                    </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/5 hover:bg-red-500/20 hover:text-red-500 flex items-center justify-center transition-colors">✕</button>
-                </div>
-
-                <div className="p-8 space-y-6">
-                    <div className="space-y-2">
-                        <label className="text-xs uppercase text-gray-500 font-bold tracking-wider">Título da Meta</label>
-                        <input className="w-full bg-black/30 border border-white/10 rounded-lg p-3 text-white focus:border-insanus-red focus:outline-none" value={goal.title} onChange={e => handleChange('title', e.target.value)} />
-                    </div>
-
-                     <div className="space-y-2">
-                        <label className="text-xs uppercase text-gray-500 font-bold tracking-wider">Cor da Meta</label>
-                        <div className="flex flex-wrap gap-2">
-                            {PRESET_COLORS.map(c => (
-                                <button
-                                    key={c.value}
-                                    onClick={() => handleChange('color', c.value)}
-                                    className={`w-8 h-8 rounded-full border-2 transition-all ${goal.color === c.value ? 'border-white scale-110 shadow-neon' : 'border-transparent opacity-50 hover:opacity-100 hover:scale-105'}`}
-                                    style={{ backgroundColor: c.value }}
-                                    title={c.label}
-                                />
-                            ))}
-                            <div className="relative">
-                                <input 
-                                    type="color" 
-                                    className="w-8 h-8 rounded-full overflow-hidden opacity-0 absolute inset-0 cursor-pointer"
-                                    value={goal.color || '#FF1F1F'}
-                                    onChange={e => handleChange('color', e.target.value)}
-                                />
-                                <div className="w-8 h-8 rounded-full border border-white/20 bg-gradient-to-br from-gray-800 to-black flex items-center justify-center text-white pointer-events-none">
-                                    <Icon.Edit className="w-3 h-3" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="space-y-2">
-                        <label className="text-xs uppercase text-gray-500 font-bold tracking-wider">Observações / Dicas</label>
-                        <textarea className="w-full bg-black/30 border border-white/10 rounded-lg p-3 text-white focus:border-insanus-red focus:outline-none h-24 resize-none" value={goal.description || ''} onChange={e => handleChange('description', e.target.value)} />
-                    </div>
-
-                    {/* Specific Logic Based on Type */}
-                    {goal.type === 'AULA' && (
-                        <div className="bg-black/20 p-5 rounded-xl border border-white/5 space-y-4">
-                            <div className="flex justify-between items-center">
-                                <label className="text-sm font-bold text-blue-400 uppercase tracking-wider">Conteúdo Programático (Aulas)</label>
-                                <button onClick={addSubGoal} className="text-[10px] uppercase font-bold bg-blue-500/10 text-blue-400 border border-blue-500/30 px-3 py-1.5 rounded hover:bg-blue-500/20 transition">+ Adicionar Bloco</button>
-                            </div>
-                            <div className="space-y-2">
-                                {goal.subGoals?.map((sub, idx) => (
-                                    <div key={sub.id} className="flex gap-2 items-center group">
-                                        <div className="w-6 h-6 rounded bg-gray-800 flex items-center justify-center text-xs text-gray-500">{idx + 1}</div>
-                                        <input className="bg-black/50 border border-white/10 rounded p-2 text-sm flex-1 focus:border-blue-500/50 focus:outline-none" placeholder="Título da Aula" value={sub.title} onChange={e => updateSubGoal(idx, 'title', e.target.value)} />
-                                        <div className="relative w-24">
-                                            <input className="bg-black/50 border border-white/10 rounded p-2 text-sm w-full focus:border-blue-500/50 focus:outline-none" type="number" value={sub.duration} onChange={e => updateSubGoal(idx, 'duration', parseInt(e.target.value))} />
-                                            <span className="absolute right-2 top-2 text-xs text-gray-600">min</span>
-                                        </div>
-                                        <input className="bg-black/50 border border-white/10 rounded p-2 text-sm w-1/3 focus:border-blue-500/50 focus:outline-none" placeholder="Link URL" value={sub.link} onChange={e => updateSubGoal(idx, 'link', e.target.value)} />
-                                        <button onClick={() => removeSubGoal(idx)} className="text-gray-600 hover:text-red-500 p-2"><Icon.Trash className="w-4 h-4" /></button>
-                                    </div>
-                                ))}
-                                {(!goal.subGoals || goal.subGoals.length === 0) && <div className="text-center py-4 border border-dashed border-white/10 rounded text-gray-600 text-sm">Nenhuma aula cadastrada ainda.</div>}
-                            </div>
-                        </div>
-                    )}
-
-                    {(goal.type === 'MATERIAL' || goal.type === 'QUESTOES' || goal.type === 'LEI_SECA') && (
-                        <div className="grid grid-cols-2 gap-6">
-                            <div className="space-y-2">
-                                <label className="text-xs uppercase text-gray-500 font-bold tracking-wider">Quantidade de Páginas</label>
-                                <input type="number" className="w-full bg-black/30 border border-white/10 rounded-lg p-3 text-white focus:border-insanus-red focus:outline-none font-mono text-lg" value={goal.pages || 0} onChange={e => handleChange('pages', parseInt(e.target.value))} />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs uppercase text-gray-500 font-bold tracking-wider">Arquivo PDF</label>
-                                <label className="cursor-pointer bg-black/30 border border-dashed border-white/20 hover:border-insanus-red/50 rounded-lg p-3 flex items-center justify-center gap-2 h-[54px] transition-colors group">
-                                    <Icon.FileText className="w-5 h-5 text-gray-500 group-hover:text-insanus-red" />
-                                    <span className="text-sm text-gray-400 group-hover:text-white truncate">{goal.pdfUrl ? goal.pdfUrl : 'Carregar PDF'}</span>
-                                    <input type="file" className="hidden" onChange={(e) => {
-                                        if (e.target.files?.[0]) handleChange('pdfUrl', e.target.files[0].name);
-                                    }} />
-                                </label>
-                            </div>
-                        </div>
-                    )}
-
-                    {goal.type === 'LEI_SECA' && (
-                        <div className="grid grid-cols-2 gap-6 bg-purple-900/5 p-4 rounded-xl border border-purple-500/10">
-                            <div className="space-y-2">
-                                <label className="text-xs uppercase text-purple-400 font-bold tracking-wider">Artigos (Ex: 1 ao 50)</label>
-                                <input className="w-full bg-black/30 border border-white/10 rounded-lg p-3 text-white focus:border-purple-500 focus:outline-none" value={goal.articles || ''} onChange={e => handleChange('articles', e.target.value)} />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs uppercase text-purple-400 font-bold tracking-wider">Modo Repetição</label>
-                                <select className="w-full bg-black/30 border border-white/10 rounded-lg p-3 text-white focus:border-purple-500 focus:outline-none appearance-none" value={goal.multiplier || 1} onChange={e => handleChange('multiplier', parseInt(e.target.value))}>
-                                    <option value={1}>1x (Leitura única)</option>
-                                    <option value={2}>2x (Repetir 2 vezes)</option>
-                                    <option value={3}>3x (Repetir 3 vezes)</option>
-                                    <option value={4}>4x (Repetir 4 vezes)</option>
-                                    <option value={5}>5x (Repetir 5 vezes)</option>
-                                </select>
-                            </div>
-                        </div>
-                    )}
-                    
-                    {/* Revision System */}
-                    <div className="border-t border-white/10 pt-6">
-                         <div className="flex items-center gap-3 mb-4">
-                            <div className="relative inline-block w-10 h-6 transition duration-200 ease-in-out select-none">
-                                <input type="checkbox" name="toggle" id="toggle" className="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer translate-x-1" style={{top: '4px', left: goal.hasRevision ? '18px' : '2px', backgroundColor: goal.hasRevision ? '#FF1F1F' : '#333'}} checked={goal.hasRevision || false} onChange={e => handleChange('hasRevision', e.target.checked)}/>
-                                <label htmlFor="toggle" className="toggle-label block overflow-hidden h-6 rounded-full bg-black border border-white/20 cursor-pointer"></label>
-                            </div>
-                            <span className={`font-bold uppercase text-sm ${goal.hasRevision ? 'text-insanus-red' : 'text-gray-500'}`}>Sistema de Revisão Espaçada</span>
-                        </div>
-                        
-                        {goal.hasRevision && (
-                            <div className="bg-gradient-to-r from-insanus-red/10 to-transparent p-4 rounded-r-xl border-l-2 border-insanus-red space-y-4 animate-fade-in">
-                                <div className="space-y-2">
-                                    <label className="text-xs uppercase text-red-400 font-bold tracking-wider">Intervalos (Dias)</label>
-                                    <input className="w-full bg-black/50 border border-white/10 rounded-lg p-3 text-white focus:border-insanus-red focus:outline-none font-mono tracking-widest" placeholder="1, 7, 15, 30" value={goal.revisionIntervals || ''} onChange={e => handleChange('revisionIntervals', e.target.value)} />
-                                    <p className="text-[10px] text-gray-500">Insira os dias separados por vírgula.</p>
-                                </div>
-                                <label className="flex items-center gap-3 text-sm text-gray-300 hover:text-white cursor-pointer">
-                                    <input type="checkbox" className="accent-insanus-red w-4 h-4" checked={goal.repeatLastInterval || false} onChange={e => handleChange('repeatLastInterval', e.target.checked)} />
-                                    <span>Repetir infinitamente o último intervalo?</span>
-                                </label>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                <div className="p-6 border-t border-white/10 bg-black/20 flex justify-end gap-3 sticky bottom-0">
-                    <button onClick={onClose} className="px-6 py-3 rounded-lg text-gray-400 hover:bg-white/5 hover:text-white transition font-bold text-sm">CANCELAR</button>
-                    <button onClick={onClose} className="px-8 py-3 rounded-lg bg-insanus-red hover:bg-red-600 text-white font-bold text-sm shadow-neon transition-all">CONCLUIR EDIÇÃO</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const CycleEditor = ({ plan, onUpdate }: { plan: StudyPlan, onUpdate: (p: StudyPlan) => void }) => {
-    
-    // Helper to get discipline name safely
-    const getDisciplineName = (id: string) => plan.disciplines.find(d => d.id === id)?.name || 'Desconhecida';
-
-    const addCycle = () => {
-        const newCycle: Cycle = {
-            id: uuid(),
-            name: `Ciclo ${plan.cycles.length + 1}`,
-            order: plan.cycles.length,
-            items: []
-        };
-        onUpdate({ ...plan, cycles: [...plan.cycles, newCycle] });
-    };
-
-    const removeCycle = (cycleId: string) => {
-        if(confirm("Remover este ciclo?")) {
-            onUpdate({ ...plan, cycles: plan.cycles.filter(c => c.id !== cycleId) });
-        }
-    };
-
-    const moveCycle = (idx: number, direction: 'up' | 'down') => {
-        const newCycles = [...plan.cycles];
-        const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-        if (swapIdx < 0 || swapIdx >= newCycles.length) return;
-        [newCycles[idx], newCycles[swapIdx]] = [newCycles[swapIdx], newCycles[idx]];
-        onUpdate({ ...plan, cycles: newCycles });
-    };
-
-    const updateCycleName = (id: string, name: string) => {
-        onUpdate({...plan, cycles: plan.cycles.map(c => c.id === id ? {...c, name} : c)});
-    }
-
-    const addItemToCycle = (cycleId: string, value: string) => {
-        // Value can be a disciplineID or "FOLDER:folderID"
-        const isFolder = value.startsWith("FOLDER:");
-        const id = isFolder ? value.split(":")[1] : value;
-        
-        let newItems: {disciplineId: string, subjectsCount: number}[] = [];
-
-        if (isFolder) {
-            // Add all disciplines from folder
-            const discsInFolder = plan.disciplines.filter(d => d.folderId === id);
-            newItems = discsInFolder.map(d => ({ disciplineId: d.id, subjectsCount: 1 }));
-        } else {
-            newItems = [{ disciplineId: id, subjectsCount: 1 }];
-        }
-
-        onUpdate({
-            ...plan,
-            cycles: plan.cycles.map(c => c.id === cycleId ? {
-                ...c,
-                items: [...c.items, ...newItems]
-            } : c)
-        });
-    };
-
-    const removeItemFromCycle = (cycleId: string, itemIdx: number) => {
-        onUpdate({
-            ...plan,
-            cycles: plan.cycles.map(c => c.id === cycleId ? {
-                ...c,
-                items: c.items.filter((_, i) => i !== itemIdx)
-            } : c)
-        });
-    };
-
-    const updateItemCount = (cycleId: string, itemIdx: number, count: number) => {
-        onUpdate({
-            ...plan,
-            cycles: plan.cycles.map(c => c.id === cycleId ? {
-                ...c,
-                items: c.items.map((item, i) => i === itemIdx ? { ...item, subjectsCount: count } : item)
-            } : c)
-        });
-    };
-
-    return (
-        <div className="max-w-5xl mx-auto space-y-8 pb-20 animate-fade-in">
-             {/* System Configuration */}
-             <div className="glass p-6 rounded-xl border border-white/10 flex items-center justify-between">
-                <div>
-                    <h3 className="text-xl font-bold text-white uppercase tracking-wider">Sistema de Rodagem</h3>
-                    <p className="text-sm text-gray-500 mt-1 max-w-lg">Defina como o algoritmo deve transitar entre os ciclos após a conclusão das metas.</p>
-                </div>
-                <div className="flex bg-black/50 p-1 rounded-lg border border-white/10">
-                    <button onClick={() => onUpdate({...plan, cycleSystem: 'continuo'})} className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-widest transition-all ${plan.cycleSystem === 'continuo' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-500 hover:text-white'}`}>
-                        Contínuo
-                    </button>
-                    <button onClick={() => onUpdate({...plan, cycleSystem: 'rotativo'})} className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-widest transition-all ${plan.cycleSystem === 'rotativo' ? 'bg-purple-600 text-white shadow-[0_0_10px_rgba(147,51,234,0.5)]' : 'text-gray-500 hover:text-white'}`}>
-                        Rotativo
-                    </button>
-                </div>
-             </div>
-
-             {/* Cycles List */}
-             <div className="space-y-6">
-                {plan.cycles.map((cycle, idx) => (
-                    <div key={cycle.id} className="glass border border-white/10 rounded-xl overflow-hidden">
-                        {/* Header */}
-                        <div className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between">
-                            <div className="flex items-center gap-4 flex-1">
-                                <div className="w-8 h-8 rounded bg-insanus-red flex items-center justify-center font-bold text-white">{idx + 1}</div>
-                                <input className="bg-transparent font-black text-xl text-white outline-none w-full uppercase" 
-                                       value={cycle.name} onChange={e => updateCycleName(cycle.id, e.target.value)} />
-                            </div>
-                            <div className="flex gap-1">
-                                <button onClick={() => moveCycle(idx, 'up')} className="p-2 hover:bg-white/10 rounded text-gray-500 hover:text-white"><Icon.ArrowUp className="w-4 h-4" /></button>
-                                <button onClick={() => moveCycle(idx, 'down')} className="p-2 hover:bg-white/10 rounded text-gray-500 hover:text-white"><Icon.ArrowDown className="w-4 h-4" /></button>
-                                <div className="h-6 w-px bg-white/10 mx-2"></div>
-                                <button onClick={() => removeCycle(cycle.id)} className="p-2 hover:bg-red-500/20 rounded text-gray-500 hover:text-red-500"><Icon.Trash className="w-4 h-4" /></button>
-                            </div>
-                        </div>
-
-                        {/* Items */}
-                        <div className="p-6 bg-black/20 space-y-3">
-                            {cycle.items.length === 0 ? (
-                                <div className="text-center py-8 border border-dashed border-white/10 rounded-lg text-gray-600 font-mono text-sm">
-                                    Nenhuma disciplina adicionada a este ciclo.
-                                </div>
-                            ) : (
-                                cycle.items.map((item, iIdx) => (
-                                    <div key={iIdx} className="flex items-center gap-4 bg-insanus-card p-3 rounded border border-white/5">
-                                        <div className="text-xs font-mono text-gray-500 w-6">{iIdx + 1}.</div>
-                                        <div className="flex-1 flex items-center gap-2 font-bold text-gray-300">
-                                            <Icon.BookOpen className="w-4 h-4 text-insanus-red" />
-                                            {getDisciplineName(item.disciplineId)}
-                                        </div>
-                                        <div className="flex items-center gap-2 bg-black/40 px-3 py-1 rounded border border-white/10">
-                                            <span className="text-[10px] text-gray-500 uppercase font-bold">Assuntos/Vez:</span>
-                                            <input type="number" min="1" className="w-12 bg-transparent text-center font-mono text-white outline-none" 
-                                                   value={item.subjectsCount} onChange={e => updateItemCount(cycle.id, iIdx, parseInt(e.target.value))} />
-                                        </div>
-                                        <button onClick={() => removeItemFromCycle(cycle.id, iIdx)} className="text-gray-600 hover:text-red-500"><Icon.Trash className="w-4 h-4" /></button>
-                                    </div>
-                                ))
-                            )}
-
-                            {/* Add Dropdown */}
-                            <div className="mt-4 pt-4 border-t border-white/5">
-                                <select 
-                                    className="w-full bg-black/50 border border-white/10 rounded p-3 text-gray-400 hover:text-white hover:border-insanus-red focus:outline-none transition-colors cursor-pointer appearance-none"
-                                    onChange={(e) => {
-                                        if (e.target.value) {
-                                            addItemToCycle(cycle.id, e.target.value);
-                                            e.target.value = ""; // Reset
-                                        }
-                                    }}
-                                >
-                                    <option value="">+ Adicionar Disciplina ou Pasta ao Ciclo...</option>
-                                    {/* Folders */}
-                                    {plan.folders.map(f => (
-                                        <option key={f.id} value={`FOLDER:${f.id}`}>📁 PASTA: {f.name} (Adicionar Tudo)</option>
-                                    ))}
-                                    <option disabled>──────────</option>
-                                    {/* Individual Disciplines */}
-                                    {plan.disciplines.map(d => (
-                                        <option key={d.id} value={d.id}>{d.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                ))}
-
-                <button onClick={addCycle} className="w-full py-6 border border-dashed border-white/20 rounded-xl text-gray-400 font-bold hover:border-insanus-red hover:text-insanus-red hover:bg-insanus-red/5 transition flex justify-center items-center gap-3">
-                    <Icon.Plus className="w-5 h-5" /> ADICIONAR NOVO CICLO
-                </button>
-             </div>
-        </div>
-    );
-};
-
-// --- Main Tree Editor ---
-
-export const PlanEditor = () => {
-    const [plans, setPlans] = useState<StudyPlan[]>([]);
-    const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
-    const [expandedDisciplines, setExpandedDisciplines] = useState<Record<string, boolean>>({});
-    const [editingGoal, setEditingGoal] = useState<{disciplineIdx: number, subjectIdx: number, goalIdx: number, data: Goal} | null>(null);
-    const [isSaving, setIsSaving] = useState(false);
-    const [viewMode, setViewMode] = useState<'structure' | 'cycles'>('structure');
-
-    useEffect(() => {
-        const loadPlans = async () => {
-            const dbPlans = await fetchPlansFromDB();
-            setPlans(dbPlans);
-        };
-        loadPlans();
-    }, []);
-
-    const savePlansLocal = (newPlans: StudyPlan[]) => {
-        setPlans(newPlans); // Updates local state for UI
-    };
-
-    const handleSync = async () => {
-        if (!currentPlan) return;
-        setIsSaving(true);
-        try {
-            await savePlanToDB(currentPlan);
-            alert("Plano sincronizado com sucesso com o Banco de Dados!");
-        } catch (e) {
-            alert("Erro ao sincronizar plano.");
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const currentPlan = plans.find(p => p.id === selectedPlanId);
-
-    // --- Helpers for Tree Manipulation ---
-    const updatePlan = (fn: (p: StudyPlan) => StudyPlan) => {
-        if (!currentPlan) return;
-        const updated = plans.map(p => p.id === currentPlan.id ? fn(p) : p);
-        savePlansLocal(updated);
-    };
-
-    const handleUpdatePlanDirect = (updatedPlan: StudyPlan) => {
-        savePlansLocal(plans.map(p => p.id === updatedPlan.id ? updatedPlan : p));
-    };
-
-    // --- Folder Operations ---
-    const addFolder = () => {
-        updatePlan(p => ({
-            ...p,
-            folders: [...p.folders, { id: uuid(), name: 'Nova Pasta', order: p.folders.length }]
-        }));
-    };
-
-    const deleteFolder = (folderId: string) => {
-        if (confirm('Ao apagar a pasta, as disciplinas dentro dela serão movidas para a raiz. Confirmar?')) {
-            updatePlan(p => ({
-                ...p,
-                folders: p.folders.filter(f => f.id !== folderId),
-                disciplines: p.disciplines.map(d => d.folderId === folderId ? { ...d, folderId: undefined } : d)
-            }));
-        }
-    };
-
-    const addDiscipline = (folderId?: string) => {
-        updatePlan(p => ({
-            ...p,
-            disciplines: [...p.disciplines, { id: uuid(), name: 'Nova Disciplina', folderId, subjects: [], order: p.disciplines.length }]
-        }));
-    };
-
-    const addSubject = (disciplineId: string) => {
-        updatePlan(p => ({
-            ...p,
-            disciplines: p.disciplines.map(d => d.id === disciplineId ? {
-                ...d,
-                subjects: [...d.subjects, { id: uuid(), name: 'Novo Assunto', goals: [], order: d.subjects.length }]
-            } : d)
-        }));
-    };
-
-    const addGoal = (disciplineId: string, subjectId: string, type: GoalType) => {
-        updatePlan(p => ({
-            ...p,
-            disciplines: p.disciplines.map(d => d.id === disciplineId ? {
-                ...d,
-                subjects: d.subjects.map(s => s.id === subjectId ? {
-                    ...s,
-                    goals: [...s.goals, { id: uuid(), title: `Nova Meta`, type, order: s.goals.length, subGoals: [] }]
-                } : s)
-            } : d)
-        }));
-    };
-    
-    const moveItem = (arr: any[], idx: number, direction: 'up' | 'down') => {
-        const newArr = [...arr];
-        const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-        if (swapIdx < 0 || swapIdx >= arr.length) return arr;
-        [newArr[idx], newArr[swapIdx]] = [newArr[swapIdx], newArr[idx]];
-        return newArr;
-    };
-
-    const moveDisciplineToFolder = (disciplineId: string, targetFolderId: string | undefined) => {
-        updatePlan(p => ({
-            ...p,
-            disciplines: p.disciplines.map(d => d.id === disciplineId ? { ...d, folderId: targetFolderId } : d)
-        }));
-    };
-
-    // Render Discipline Component (Recursive-like structure helper)
-    const renderDiscipline = (disc: Discipline, discIdx: number) => (
-        <div key={disc.id} className="relative group pl-6">
-            {/* Connector Line */}
-            <div className="absolute left-0 top-8 w-6 h-px bg-white/10 group-hover:bg-insanus-red/50 transition-colors"></div>
-            <div className="absolute left-0 top-8 w-2 h-2 rounded-full bg-insanus-black border border-white/30 group-hover:border-insanus-red group-hover:bg-insanus-red transition-all"></div>
-
-            <div className="glass border border-white/5 rounded-xl overflow-hidden transition-all duration-300 hover:border-white/20">
-                {/* Discipline Header */}
-                <div className="flex items-center justify-between p-4 bg-white/5 cursor-pointer select-none" onClick={() => setExpandedDisciplines(prev => ({...prev, [disc.id]: !prev[disc.id]}))}>
-                    <div className="flex items-center gap-4 flex-1">
-                        <div className={`transition-transform duration-300 ${expandedDisciplines[disc.id] ? 'rotate-90 text-insanus-red' : 'text-gray-500'}`}>
-                            <Icon.ChevronRight className="w-5 h-5" />
-                        </div>
-                        <Icon.BookOpen className="w-5 h-5 text-gray-400" />
-                        <input onClick={e => e.stopPropagation()} className="bg-transparent font-bold text-lg text-white outline-none w-full" 
-                                value={disc.name} onChange={e => updatePlan(p => ({...p, disciplines: p.disciplines.map(d => d.id === disc.id ? {...d, name: e.target.value} : d)}))} />
-                    </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                         {/* Move Folder Dropdown */}
-                         <div onClick={e => e.stopPropagation()} className="relative group/move mr-2">
-                             <div className="text-[10px] bg-white/5 px-2 py-1 rounded cursor-pointer hover:bg-white/10 text-gray-400 flex items-center gap-1">
-                                 <Icon.Folder className="w-3 h-3"/> Mover
-                             </div>
-                             <div className="absolute right-0 top-full mt-1 w-48 bg-black border border-white/20 rounded-lg shadow-xl hidden group-hover/move:block z-50">
-                                 <div onClick={() => moveDisciplineToFolder(disc.id, undefined)} className="px-3 py-2 text-xs hover:bg-white/10 cursor-pointer text-gray-300">
-                                     Raiz (Sem Pasta)
-                                 </div>
-                                 {currentPlan?.folders.map(f => (
-                                     <div key={f.id} onClick={() => moveDisciplineToFolder(disc.id, f.id)} className="px-3 py-2 text-xs hover:bg-white/10 cursor-pointer text-gray-300">
-                                         {f.name}
-                                     </div>
-                                 ))}
-                             </div>
-                         </div>
-
-                        <button onClick={(e) => { e.stopPropagation(); updatePlan(p => ({...p, disciplines: moveItem(p.disciplines, discIdx, 'up')}))}} className="p-2 hover:bg-white/10 rounded text-gray-500 hover:text-white"><Icon.ArrowUp className="w-4 h-4" /></button>
-                        <button onClick={(e) => { e.stopPropagation(); updatePlan(p => ({...p, disciplines: moveItem(p.disciplines, discIdx, 'down')}))}} className="p-2 hover:bg-white/10 rounded text-gray-500 hover:text-white"><Icon.ArrowDown className="w-4 h-4" /></button>
-                        <div className="w-px h-4 bg-white/10 mx-1"></div>
-                        <button onClick={(e) => { e.stopPropagation(); if(confirm('Apagar?')) updatePlan(p => ({...p, disciplines: p.disciplines.filter(d => d.id !== disc.id)}))}} className="p-2 hover:bg-red-500/20 rounded text-gray-500 hover:text-red-500"><Icon.Trash className="w-4 h-4" /></button>
-                    </div>
-                </div>
-
-                {/* Subjects List */}
-                <div className={`transition-all duration-500 overflow-hidden ${expandedDisciplines[disc.id] ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                    <div className="p-4 space-y-4 bg-black/20 border-t border-white/5 relative">
-                        {/* Inner hierarchy line */}
-                        <div className="absolute left-6 top-0 bottom-0 w-px bg-white/5"></div>
-
-                        {disc.subjects.map((sub, subIdx) => (
-                            <div key={sub.id} className="pl-8 relative">
-                                {/* Subject Line */}
-                                <div className="absolute left-6 top-5 w-2 h-px bg-white/20"></div>
-
-                                <div className="bg-insanus-card border border-white/5 rounded-lg p-4 hover:border-white/10 transition-all">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <div className="flex items-center gap-3 w-full">
-                                            <div className="w-2 h-2 rounded-full bg-insanus-red/50"></div>
-                                            <input className="bg-transparent font-semibold text-gray-200 outline-none w-full text-sm" 
-                                                    value={sub.name} onChange={e => updatePlan(p => ({...p, disciplines: p.disciplines.map(d => d.id === disc.id ? {...d, subjects: d.subjects.map(s => s.id === sub.id ? {...s, name: e.target.value} : s)} : d)}))} />
-                                        </div>
-                                        <div className="flex gap-1">
-                                                <button onClick={() => updatePlan(p => ({...p, disciplines: p.disciplines.map(d => d.id === disc.id ? {...d, subjects: moveItem(d.subjects, subIdx, 'up')} : d)}))} className="text-gray-600 hover:text-white p-1"><Icon.ArrowUp className="w-3 h-3"/></button>
-                                                <button onClick={() => updatePlan(p => ({...p, disciplines: p.disciplines.map(d => d.id === disc.id ? {...d, subjects: moveItem(d.subjects, subIdx, 'down')} : d)}))} className="text-gray-600 hover:text-white p-1"><Icon.ArrowDown className="w-3 h-3"/></button>
-                                                <button onClick={() => {if(confirm('Apagar?')) updatePlan(p => ({...p, disciplines: p.disciplines.map(d => d.id === disc.id ? {...d, subjects: d.subjects.filter(s => s.id !== sub.id)} : d)}))}} className="text-gray-600 hover:text-red-500 p-1"><Icon.Trash className="w-3 h-3"/></button>
-                                        </div>
-                                    </div>
-
-                                    {/* Goals List */}
-                                    <div className="space-y-2">
-                                        {sub.goals.map((goal, goalIdx) => (
-                                            <div key={goal.id} className="flex justify-between items-center bg-black/40 p-3 rounded border border-white/5 hover:border-insanus-red/30 transition group hover:shadow-[0_0_15px_rgba(0,0,0,0.5)] cursor-pointer" onClick={() => setEditingGoal({disciplineIdx: discIdx, subjectIdx: subIdx, goalIdx, data: goal})}>
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-8 h-8 rounded flex items-center justify-center font-bold text-xs text-white`} style={{ backgroundColor: goal.color || '#333' }}>
-                                                        {goal.type[0]}
-                                                    </div>
-                                                    <div className="flex flex-col">
-                                                        <span className="text-xs text-gray-500 font-mono leading-none mb-1">{goal.type}</span>
-                                                        <span className="text-sm font-medium text-white group-hover:text-insanus-red transition-colors truncate max-w-[200px]">{goal.title}</span>
-                                                    </div>
-                                                </div>
-                                                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity items-center">
-                                                    <div className="text-[10px] text-gray-600 font-mono mr-2">EDITAR</div>
-                                                    <Icon.Edit className="w-4 h-4 text-gray-400" />
-                                                    
-                                                    <div className="w-px h-4 bg-white/10 mx-1"></div>
-                                                    
-                                                    <div className="flex flex-col">
-                                                        <button onClick={(e) => { e.stopPropagation(); updatePlan(p => ({...p, disciplines: p.disciplines.map(d => d.id === disc.id ? {...d, subjects: d.subjects.map(s => s.id === sub.id ? {...s, goals: moveItem(s.goals, goalIdx, 'up')} : s)} : d)}))}} className="text-gray-500 hover:text-white"><Icon.ArrowUp className="w-3 h-3"/></button>
-                                                        <button onClick={(e) => { e.stopPropagation(); updatePlan(p => ({...p, disciplines: p.disciplines.map(d => d.id === disc.id ? {...d, subjects: d.subjects.map(s => s.id === sub.id ? {...s, goals: moveItem(s.goals, goalIdx, 'down')} : s)} : d)}))}} className="text-gray-500 hover:text-white"><Icon.ArrowDown className="w-3 h-3"/></button>
-                                                    </div>
-                                                    <button onClick={(e) => { e.stopPropagation(); if(confirm('Apagar?')) updatePlan(p => ({...p, disciplines: p.disciplines.map(d => d.id === disc.id ? {...d, subjects: d.subjects.map(s => s.id === sub.id ? {...s, goals: s.goals.filter(g => g.id !== goal.id)} : s)} : d)}))}} className="text-gray-600 hover:text-red-500"><Icon.Trash className="w-4 h-4" /></button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        
-                                        {/* Add Buttons */}
-                                        <div className="flex gap-2 pt-2 overflow-x-auto pb-2 scrollbar-hide">
-                                            {['AULA', 'MATERIAL', 'QUESTOES', 'LEI_SECA', 'RESUMO'].map(type => (
-                                                <button key={type} onClick={() => addGoal(disc.id, sub.id, type as GoalType)} className="shrink-0 text-[9px] font-bold uppercase tracking-wider bg-white/5 border border-white/10 hover:bg-white hover:text-black hover:border-white px-3 py-2 rounded transition">
-                                                    + {type}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                        <div className="pl-8">
-                            <button onClick={() => addSubject(disc.id)} className="w-full py-3 border border-dashed border-white/10 rounded text-gray-500 text-xs font-mono hover:border-insanus-red hover:text-insanus-red transition flex justify-center items-center gap-2">
-                                <Icon.Plus className="w-3 h-3" /> ADICIONAR NOVO ASSUNTO
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-
-    if (!selectedPlanId) {
+    if (confirming) {
         return (
-            <div className="p-10 h-full overflow-y-auto">
-                <div className="max-w-7xl mx-auto">
-                    <div className="flex justify-between items-end mb-10 border-b border-white/10 pb-6">
-                        <div>
-                            <h2 className="text-4xl font-black text-white tracking-tighter">MEUS <span className="text-insanus-red">PLANOS</span></h2>
-                            <p className="text-gray-500 font-mono text-xs mt-2">SELECIONE UM PLANO PARA EDITAR OU CRIE UM NOVO.</p>
-                        </div>
-                        <button onClick={() => {
-                            const newPlan: StudyPlan = {
-                                id: uuid(), name: 'Plano Sem Título', coverImage: 'https://picsum.photos/800/400',
-                                folders: [], disciplines: [], cycles: [], cycleSystem: 'continuo'
-                            };
-                            savePlansLocal([...plans, newPlan]);
-                            setSelectedPlanId(newPlan.id);
-                        }} className="bg-white text-black hover:bg-insanus-red hover:text-white px-6 py-3 rounded-lg font-bold flex gap-2 items-center transition-all duration-300">
-                            <Icon.Plus className="w-5 h-5" /> CRIAR NOVO PLANO
-                        </button>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                        {plans.map(p => (
-                            <div key={p.id} onClick={() => setSelectedPlanId(p.id)} className="group relative bg-insanus-card border border-white/10 rounded-2xl overflow-hidden cursor-pointer hover:border-insanus-red transition-all duration-500 hover:shadow-neon hover:-translate-y-1">
-                                <div className="h-48 overflow-hidden relative">
-                                    <div className="absolute inset-0 bg-gradient-to-t from-insanus-card via-transparent to-transparent z-10" />
-                                    <img src={p.coverImage} className="w-full h-full object-cover group-hover:scale-110 transition duration-700 opacity-60 group-hover:opacity-100" />
-                                    <div className="absolute bottom-4 left-4 z-20">
-                                        <h3 className="text-2xl font-black text-white leading-none mb-1 group-hover:text-insanus-red transition-colors">{p.name}</h3>
-                                        <div className="h-1 w-12 bg-insanus-red rounded-full"></div>
-                                    </div>
-                                </div>
-                                <div className="p-5 flex justify-between items-center bg-black/40">
-                                    <div className="flex items-center gap-2 text-xs font-mono text-gray-400">
-                                        <Icon.Book className="w-4 h-4" />
-                                        <span>{p.disciplines.length} DISCIPLINAS</span>
-                                    </div>
-                                    <span className={`text-[10px] font-bold px-2 py-1 rounded border ${p.cycleSystem === 'continuo' ? 'border-blue-500/30 text-blue-400' : 'border-purple-500/30 text-purple-400'}`}>
-                                        {p.cycleSystem.toUpperCase()}
-                                    </span>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+            <div className="flex items-center gap-1 animate-fade-in">
+                <button onClick={onDelete} className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold px-2 py-1 rounded">SIM</button>
+                <button onClick={() => setConfirming(false)} className="bg-gray-700 hover:bg-gray-600 text-white text-[10px] font-bold px-2 py-1 rounded">NÃO</button>
             </div>
         );
     }
 
-    if (!currentPlan) return null;
+    return (
+        <button onClick={() => setConfirming(true)} className={`text-gray-500 hover:text-red-500 transition-colors ${className}`}>
+            <Icon.Trash className="w-4 h-4" />
+            {label && <span className="ml-1">{label}</span>}
+        </button>
+    );
+};
+
+// --- SUB-COMPONENT: EDITAL TOPIC EDITOR ---
+interface EditalTopicEditorProps {
+    topic: EditalTopic;
+    plan: StudyPlan;
+    onUpdate: (t: EditalTopic) => void;
+    onDelete: () => void;
+}
+
+const EditalTopicEditor: React.FC<EditalTopicEditorProps> = ({ topic, plan, onUpdate, onDelete }) => {
+    const [expanded, setExpanded] = useState(false);
+
+    // Helper to toggle a contest in the relatedContests array
+    const toggleContest = (contest: string) => {
+        const current = topic.relatedContests || [];
+        const updated = current.includes(contest)
+            ? current.filter(c => c !== contest)
+            : [...current, contest];
+        onUpdate({ ...topic, relatedContests: updated });
+    };
+
+    // Helper to render Goal Selector
+    const renderGoalSelector = (
+        label: string, 
+        currentId: string | undefined, 
+        onChange: (val: string) => void,
+        icon: any
+    ) => {
+        return (
+            <div className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-2 mb-1 text-[10px] font-bold text-gray-500 uppercase">
+                    {icon} {label}
+                </div>
+                <select 
+                    value={currentId || ''}
+                    onChange={(e) => onChange(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded p-2 text-xs text-white focus:outline-none focus:border-white/30 truncate"
+                >
+                    <option value="">(Não vinculado)</option>
+                    {plan.disciplines.map(d => (
+                        <optgroup key={d.id} label={d.name}>
+                            {d.subjects.map(s => (
+                                s.goals.map(g => (
+                                    <option key={g.id} value={g.id}>
+                                        {s.name} - {g.title} ({g.type})
+                                    </option>
+                                ))
+                            ))}
+                        </optgroup>
+                    ))}
+                </select>
+            </div>
+        );
+    };
 
     return (
-        <div className="flex flex-col h-full bg-insanus-black">
-            {/* Header */}
-            <div className="bg-insanus-card border-b border-white/10 p-4 flex items-center justify-between shrink-0 z-20 shadow-lg">
-                <div className="flex items-center gap-6">
-                    <button onClick={() => setSelectedPlanId(null)} className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center hover:bg-white text-gray-400 hover:text-black transition-all">
-                        <span className="font-bold text-lg">←</span>
-                    </button>
-                    <div>
-                        <input className="bg-transparent text-2xl font-black text-white outline-none placeholder-gray-600 focus:text-insanus-red transition-colors w-96" 
-                               value={currentPlan.name} 
-                               onChange={e => updatePlan(p => ({ ...p, name: e.target.value }))} />
-                        <div className="text-[10px] font-mono text-gray-500 tracking-widest uppercase mt-1">Modo Edição Avançado</div>
-                    </div>
-                </div>
-                <div className="flex gap-3">
-                     {/* SYNC BUTTON */}
-                     <button 
-                        onClick={handleSync} 
-                        disabled={isSaving}
-                        className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 px-6 py-2 rounded shadow-neon transition-all ${isSaving ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white'}`}
-                    >
-                        {isSaving ? (
-                            <>
-                                <Icon.RefreshCw className="w-4 h-4 animate-spin" /> SALVANDO...
-                            </>
-                        ) : (
-                            <>
-                                <Icon.RefreshCw className="w-4 h-4" /> SINCRONIZAR PLANO
-                            </>
-                        )}
-                    </button>
-                    <div className="flex bg-white/5 border border-white/10 rounded-lg p-1">
-                        <button 
-                            onClick={() => setViewMode('structure')}
-                            className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-wider transition-all ${viewMode === 'structure' ? 'bg-white text-black shadow-lg' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            Estrutura
-                        </button>
-                        <button 
-                            onClick={() => setViewMode('cycles')}
-                            className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-wider transition-all ${viewMode === 'cycles' ? 'bg-white text-black shadow-lg' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            Ciclos
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* Tree Editor */}
-            <div className="flex-1 overflow-y-auto p-8 relative">
-                {viewMode === 'cycles' ? (
-                    <CycleEditor plan={currentPlan} onUpdate={handleUpdatePlanDirect} />
-                ) : (
-                    <div className="max-w-5xl space-y-8 pl-4">
-                        
-                        {/* Folders Render */}
-                        {currentPlan.folders.map((folder, fIdx) => (
-                            <div key={folder.id} className="relative">
-                                <div className="flex items-center justify-between p-4 bg-white/5 rounded-t-xl border-x border-t border-white/10 cursor-pointer" onClick={() => setExpandedFolders(prev => ({...prev, [folder.id]: !prev[folder.id]}))}>
-                                    <div className="flex items-center gap-4 flex-1">
-                                        <div className={`transition-transform duration-300 ${expandedFolders[folder.id] ? 'rotate-90' : ''}`}>
-                                            <Icon.ChevronRight className="w-5 h-5 text-gray-500" />
-                                        </div>
-                                        <Icon.Folder className="w-6 h-6 text-insanus-red" />
-                                        <input onClick={e => e.stopPropagation()} className="bg-transparent font-bold text-xl text-white outline-none w-full uppercase tracking-tight"
-                                            value={folder.name} onChange={e => updatePlan(p => ({...p, folders: p.folders.map(f => f.id === folder.id ? {...f, name: e.target.value} : f)}))} />
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <button onClick={(e) => { e.stopPropagation(); updatePlan(p => ({...p, folders: moveItem(p.folders, fIdx, 'up')}))}} className="p-2 hover:bg-white/10 rounded text-gray-500 hover:text-white"><Icon.ArrowUp className="w-4 h-4" /></button>
-                                        <button onClick={(e) => { e.stopPropagation(); updatePlan(p => ({...p, folders: moveItem(p.folders, fIdx, 'down')}))}} className="p-2 hover:bg-white/10 rounded text-gray-500 hover:text-white"><Icon.ArrowDown className="w-4 h-4" /></button>
-                                        <button onClick={(e) => { e.stopPropagation(); deleteFolder(folder.id) }} className="p-2 hover:bg-red-500/20 rounded text-gray-500 hover:text-red-500"><Icon.Trash className="w-4 h-4" /></button>
-                                    </div>
-                                </div>
-                                
-                                {/* Inside Folder */}
-                                <div className={`${expandedFolders[folder.id] ? 'block' : 'hidden'} bg-white/5 border-x border-b border-white/10 rounded-b-xl p-4 pl-8 space-y-4`}>
-                                    {currentPlan.disciplines.filter(d => d.folderId === folder.id).length === 0 && (
-                                        <div className="text-center py-6 text-gray-600 font-mono text-sm border border-dashed border-white/5 rounded-xl">
-                                            Pasta Vazia. Adicione ou mova disciplinas para cá.
-                                        </div>
-                                    )}
-                                    {currentPlan.disciplines.filter(d => d.folderId === folder.id).map((disc, idx) => renderDiscipline(disc, idx))}
-                                    
-                                    <button onClick={() => addDiscipline(folder.id)} className="w-full py-4 border border-dashed border-white/10 rounded-xl text-gray-500 font-bold hover:border-insanus-red hover:text-insanus-red transition flex justify-center items-center gap-2">
-                                        <Icon.Plus className="w-3 h-3" /> NOVA DISCIPLINA NA PASTA
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-
-                        {/* Button to Create Folder */}
-                        <button onClick={addFolder} className="w-full py-6 bg-insanus-red/10 border border-insanus-red/30 rounded-xl text-insanus-red font-bold hover:bg-insanus-red/20 transition flex justify-center items-center gap-3">
-                            <Icon.FolderPlus className="w-6 h-6" /> CRIAR NOVA PASTA
-                        </button>
-
-                        <div className="border-t border-white/10 my-8"></div>
-                        <div className="text-xs font-mono text-gray-500 uppercase tracking-widest mb-4">Disciplinas Soltas (Raiz)</div>
-
-                        {/* Root Disciplines */}
-                        <div className="space-y-6">
-                            {currentPlan.disciplines.filter(d => !d.folderId).map((disc, discIdx) => renderDiscipline(disc, discIdx))}
-                            
-                            <button onClick={() => addDiscipline()} className="w-full py-6 border border-dashed border-white/20 rounded-2xl text-gray-400 font-bold hover:border-insanus-red hover:text-insanus-red hover:bg-insanus-red/5 transition flex justify-center items-center gap-3 group">
-                                <div className="w-8 h-8 rounded-full border border-current flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    <Icon.Plus className="w-4 h-4" />
-                                </div>
-                                <span className="tracking-widest uppercase text-sm">Criar Nova Disciplina (Raiz)</span>
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Modal for Goal Editing */}
-            {editingGoal && (
-                <GoalEditor 
-                    goal={editingGoal.data} 
-                    onClose={() => setEditingGoal(null)}
-                    onChange={(updatedGoal) => {
-                        updatePlan(p => {
-                            const newDisciplines = [...p.disciplines];
-                            const d = newDisciplines[editingGoal.disciplineIdx];
-                            const s = d.subjects[editingGoal.subjectIdx];
-                            s.goals[editingGoal.goalIdx] = updatedGoal;
-                            return { ...p, disciplines: newDisciplines };
-                        });
-                        // Prevent modal from closing by updating local state with new data
-                        setEditingGoal(prev => prev ? { ...prev, data: updatedGoal } : null);
-                    }}
+        <div className="bg-black/30 border border-white/5 rounded-lg mb-2 overflow-hidden">
+            <div className="flex items-center p-3 gap-3">
+                <button onClick={() => setExpanded(!expanded)} className="text-gray-500 hover:text-white">
+                    {expanded ? <Icon.ChevronDown className="w-4 h-4 rotate-180" /> : <Icon.ChevronRight className="w-4 h-4" />}
+                </button>
+                <input 
+                    value={topic.name}
+                    onChange={(e) => onUpdate({...topic, name: e.target.value})}
+                    className="flex-1 bg-transparent text-sm font-bold text-white focus:outline-none"
+                    placeholder="Nome do Tópico (Ex: Atos Administrativos)"
                 />
+                
+                {/* Contest Badges Preview */}
+                <div className="flex gap-1">
+                    {topic.relatedContests?.map(c => (
+                        <span key={c} className="text-[9px] bg-insanus-red/20 text-insanus-red px-1 rounded font-bold">{c}</span>
+                    ))}
+                </div>
+
+                <SafeDeleteBtn onDelete={onDelete} />
+            </div>
+
+            {expanded && (
+                <div className="p-3 bg-black/20 border-t border-white/5 animate-fade-in grid gap-4">
+                    {/* CONTEST SELECTOR (Only if Police & Contests Defined) */}
+                    {plan.category === 'CARREIRAS_POLICIAIS' && plan.linkedContests && plan.linkedContests.length > 0 && (
+                        <div className="mb-2 p-2 bg-white/5 rounded border border-white/5">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase mb-2 block">Aplicável aos Concursos:</label>
+                            <div className="flex flex-wrap gap-2">
+                                {plan.linkedContests.map(contest => {
+                                    const isSelected = topic.relatedContests?.includes(contest);
+                                    return (
+                                        <button 
+                                            key={contest}
+                                            onClick={() => toggleContest(contest)}
+                                            className={`text-[10px] px-2 py-1 rounded border transition-all ${isSelected ? 'bg-insanus-red text-white border-insanus-red shadow-neon' : 'bg-black text-gray-500 border-gray-700 hover:border-gray-500'}`}
+                                        >
+                                            {contest}
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {renderGoalSelector("Aula", topic.links.aula, (v) => onUpdate({...topic, links: {...topic.links, aula: v}}), <Icon.Play className="w-3 h-3"/>)}
+                        {renderGoalSelector("PDF / Material", topic.links.material, (v) => onUpdate({...topic, links: {...topic.links, material: v}}), <Icon.FileText className="w-3 h-3"/>)}
+                        {renderGoalSelector("Questões", topic.links.questoes, (v) => onUpdate({...topic, links: {...topic.links, questoes: v}}), <Icon.Code className="w-3 h-3"/>)}
+                        {renderGoalSelector("Lei Seca", topic.links.leiSeca, (v) => onUpdate({...topic, links: {...topic.links, leiSeca: v}}), <Icon.Book className="w-3 h-3"/>)}
+                        {renderGoalSelector("Resumo", topic.links.resumo, (v) => onUpdate({...topic, links: {...topic.links, resumo: v}}), <Icon.Edit className="w-3 h-3"/>)}
+                        {renderGoalSelector("Revisão Específica", topic.links.revisao, (v) => onUpdate({...topic, links: {...topic.links, revisao: v}}), <Icon.RefreshCw className="w-3 h-3"/>)}
+                    </div>
+                    <div className="text-[10px] text-gray-500 italic bg-insanus-red/5 p-2 rounded">
+                        * Ao vincular metas de Questões ou Resumo que possuam "Revisão Automática" ativada, o Edital Verticalizado identificará automaticamente as Revisões (1, 2, 3...) deste tópico.
+                    </div>
+                </div>
             )}
         </div>
     );
 };
 
-export const AdminDashboard: React.FC<{ user: User, onSwitchToUser: () => void }> = ({user, onSwitchToUser}) => {
-  const [tab, setTab] = useState<'users' | 'plans'>('plans');
+// --- SUB-COMPONENT: CYCLE EDITOR ---
+interface CycleEditorProps {
+    cycle: Cycle;
+    allDisciplines: Discipline[];
+    onUpdate: (c: Cycle) => void;
+    onDelete: () => void;
+}
 
-  return (
-    <div className="flex w-full h-full">
-      {/* Sidebar */}
-      <div className="w-20 lg:w-72 bg-insanus-black border-r border-white/10 flex flex-col shrink-0">
-        <div className="p-6 border-b border-white/5 flex items-center justify-center lg:justify-start gap-3">
-            <div className="w-8 h-8 bg-insanus-red rounded shadow-neon shrink-0"></div>
-            <div className="hidden lg:block">
-                <h1 className="text-white font-black text-lg tracking-tighter leading-none">INSANUS<span className="text-insanus-red">.ADMIN</span></h1>
-                <p className="text-[10px] text-gray-500 font-mono mt-1 tracking-widest">COMMAND CENTER</p>
+const CycleEditor: React.FC<CycleEditorProps> = ({ cycle, allDisciplines, onUpdate, onDelete }) => {
+    const [selectedDiscId, setSelectedDiscId] = useState('');
+
+    const addItem = () => {
+        if (!selectedDiscId) return;
+        const newItem: CycleItem = { disciplineId: selectedDiscId, subjectsCount: 1 };
+        onUpdate({ ...cycle, items: [...cycle.items, newItem] });
+        setSelectedDiscId('');
+    };
+
+    const updateItem = (index: number, field: keyof CycleItem, value: any) => {
+        const newItems = [...cycle.items];
+        newItems[index] = { ...newItems[index], [field]: value };
+        onUpdate({ ...cycle, items: newItems });
+    };
+
+    const removeItem = (index: number) => {
+        const newItems = cycle.items.filter((_, i) => i !== index);
+        onUpdate({ ...cycle, items: newItems });
+    };
+
+    // Filter out disciplines already in this cycle to avoid duplicates (optional, but good UX)
+    const availableDisciplines = allDisciplines; 
+
+    return (
+        <div className="glass rounded-xl border border-white/5 overflow-hidden mb-6">
+            <div className="bg-white/5 p-4 flex justify-between items-center border-b border-white/5">
+                <div className="flex items-center gap-3 flex-1">
+                    <div className="w-8 h-8 rounded-full bg-insanus-red/20 text-insanus-red flex items-center justify-center font-black text-xs border border-insanus-red">
+                        {cycle.order + 1}
+                    </div>
+                    <input 
+                        value={cycle.name} 
+                        onChange={e => onUpdate({...cycle, name: e.target.value})}
+                        className="bg-transparent font-bold text-white focus:outline-none w-full text-lg placeholder-gray-600"
+                        placeholder="Nome do Ciclo (Ex: Ciclo Básico)"
+                    />
+                </div>
+                <SafeDeleteBtn onDelete={onDelete} />
             </div>
-        </div>
-        
-        <nav className="flex-1 p-4 space-y-2">
-            <button onClick={() => setTab('plans')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all group ${tab === 'plans' ? 'bg-gradient-to-r from-insanus-red to-red-900 text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
-                <Icon.Book className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                <span className="hidden lg:block font-bold text-sm uppercase tracking-wide">Planos de Estudo</span>
-            </button>
-            <button onClick={() => setTab('users')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all group ${tab === 'users' ? 'bg-gradient-to-r from-insanus-red to-red-900 text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
-                <Icon.User className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                <span className="hidden lg:block font-bold text-sm uppercase tracking-wide">Base de Alunos</span>
-            </button>
-        </nav>
 
-        <div className="p-4 border-t border-white/5">
-            {/* View As Student Button */}
-            <button onClick={onSwitchToUser} className="w-full bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white p-3 rounded-xl flex items-center justify-center lg:justify-start gap-3 transition-all group mb-4 border border-white/5">
-                <Icon.Eye className="w-5 h-5 text-insanus-red group-hover:scale-110 transition-transform" />
-                <span className="hidden lg:block font-bold text-sm">Visualizar como Aluno</span>
-            </button>
+            <div className="p-4">
+                {/* List of Cycle Items */}
+                <div className="space-y-2 mb-4">
+                    {cycle.items.length === 0 && (
+                        <div className="text-center text-gray-600 text-xs py-4 border border-dashed border-gray-700 rounded">
+                            Nenhuma disciplina neste ciclo. Adicione abaixo.
+                        </div>
+                    )}
+                    {cycle.items.map((item, idx) => {
+                        const discName = allDisciplines.find(d => d.id === item.disciplineId)?.name || 'Disciplina Removida';
+                        return (
+                            <div key={idx} className="flex items-center gap-4 bg-black/30 p-2 rounded border border-white/5 hover:border-white/10 transition-colors">
+                                <div className="text-gray-500 font-mono text-xs w-6 text-center">{idx + 1}.</div>
+                                <div className="flex-1 text-sm font-bold text-gray-200">{discName}</div>
+                                
+                                <div className="flex items-center gap-2 bg-black/50 rounded px-2 py-1 border border-white/5">
+                                    <span className="text-[10px] text-gray-500 uppercase">Qtd. Metas:</span>
+                                    <input 
+                                        type="number" 
+                                        min="1"
+                                        value={item.subjectsCount}
+                                        onChange={(e) => updateItem(idx, 'subjectsCount', parseInt(e.target.value) || 1)}
+                                        className="w-12 bg-transparent text-center text-white text-sm font-bold focus:outline-none"
+                                    />
+                                </div>
+                                
+                                <button onClick={() => removeItem(idx)} className="text-gray-600 hover:text-red-500 p-1">
+                                    <Icon.Trash className="w-4 h-4" />
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
 
-            <div className="bg-white/5 rounded-lg p-3 flex items-center gap-3 hidden lg:flex">
-                <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center font-bold">A</div>
-                <div className="overflow-hidden">
-                    <div className="text-xs font-bold text-white truncate">{user.name}</div>
-                    <div className="text-[10px] text-insanus-red font-mono uppercase">Administrador</div>
+                {/* Add Item Controls */}
+                <div className="flex gap-2 pt-2 border-t border-white/5">
+                    <select 
+                        value={selectedDiscId}
+                        onChange={(e) => setSelectedDiscId(e.target.value)}
+                        className="flex-1 bg-white/5 text-gray-300 text-xs rounded p-2 outline-none border border-transparent focus:border-white/20"
+                    >
+                        <option value="">Selecione uma disciplina...</option>
+                        {availableDisciplines.map(d => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                    </select>
+                    <button 
+                        onClick={addItem}
+                        disabled={!selectedDiscId}
+                        className="bg-insanus-red/20 text-insanus-red hover:bg-insanus-red hover:text-white px-4 py-2 rounded text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                        ADICIONAR
+                    </button>
                 </div>
             </div>
         </div>
-      </div>
+    );
+};
 
-      {/* Main Content */}
-      <div className="flex-1 bg-black relative flex flex-col min-w-0">
-        <div className="absolute inset-0 bg-tech-grid opacity-20 pointer-events-none" />
-        <div className="relative h-full flex flex-col">
-            {tab === 'users' ? <UsersManager /> : <PlanEditor />}
+// --- SUB-COMPONENT: GOAL EDITOR ---
+interface GoalEditorProps {
+    goal: Goal;
+    onUpdate: (g: Goal) => void;
+    onDelete: () => void;
+}
+
+const GoalEditor: React.FC<GoalEditorProps> = ({ goal, onUpdate, onDelete }) => {
+    const [uploading, setUploading] = useState(false);
+    const [expanded, setExpanded] = useState(false);
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files || !e.target.files[0]) return;
+        setUploading(true);
+        try {
+            const url = await uploadFileToStorage(e.target.files[0]);
+            onUpdate({ ...goal, pdfUrl: url });
+        } catch (err) {
+            alert("Erro no upload");
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    // Subgoal Logic
+    const addSubGoal = () => {
+        const newSub: SubGoal = { id: uuid(), title: 'Nova Aula', link: '', duration: 30 };
+        onUpdate({ ...goal, subGoals: [...(goal.subGoals || []), newSub] });
+    };
+
+    const updateSubGoal = (index: number, field: keyof SubGoal, value: any) => {
+        if (!goal.subGoals) return;
+        const newSubs = [...goal.subGoals];
+        newSubs[index] = { ...newSubs[index], [field]: value };
+        onUpdate({ ...goal, subGoals: newSubs });
+    };
+
+    const removeSubGoal = (index: number) => {
+        if (!goal.subGoals) return;
+        const newSubs = goal.subGoals.filter((_, i) => i !== index);
+        onUpdate({ ...goal, subGoals: newSubs });
+    };
+
+    const totalDuration = goal.subGoals?.reduce((acc, curr) => acc + (Number(curr.duration)||0), 0) || 0;
+
+    return (
+        <div className="bg-black/40 p-3 rounded border border-white/5 hover:border-white/20 transition-all mb-2">
+            {/* Header Line */}
+            <div className="flex items-center gap-2 mb-2">
+                <div 
+                    className="w-3 h-8 rounded shrink-0 cursor-pointer border border-white/10"
+                    style={{ backgroundColor: goal.color || '#333' }}
+                    title="Escolher cor da meta"
+                >
+                    <input 
+                        type="color" 
+                        className="opacity-0 w-full h-full cursor-pointer"
+                        value={goal.color || '#333333'}
+                        onChange={(e) => onUpdate({...goal, color: e.target.value})}
+                    />
+                </div>
+                
+                <select 
+                    value={goal.type} 
+                    onChange={e => onUpdate({...goal, type: e.target.value as any})}
+                    className="bg-white/5 text-[10px] font-bold rounded p-2 text-gray-300 border-none outline-none uppercase"
+                >
+                    <option value="AULA">AULA (VIDEO)</option>
+                    <option value="MATERIAL">MATERIAL (PDF)</option>
+                    <option value="QUESTOES">QUESTÕES</option>
+                    <option value="LEI_SECA">LEI SECA</option>
+                    <option value="RESUMO">RESUMO</option>
+                    <option value="REVISAO">REVISÃO</option>
+                </select>
+                
+                <input 
+                    value={goal.title} 
+                    onChange={e => onUpdate({...goal, title: e.target.value})}
+                    className="bg-transparent flex-1 text-sm font-bold text-white focus:outline-none border-b border-transparent focus:border-insanus-red placeholder-gray-600"
+                    placeholder="Título da Meta"
+                />
+                
+                <button onClick={() => setExpanded(!expanded)} className="text-gray-500 hover:text-white">
+                    {expanded ? <Icon.ArrowUp className="w-4 h-4" /> : <Icon.Edit className="w-4 h-4" />}
+                </button>
+                <SafeDeleteBtn onDelete={onDelete} />
+            </div>
+            
+            {/* Details Area */}
+            {expanded && (
+                <div className="mt-4 pt-4 border-t border-white/5 space-y-4 animate-fade-in">
+                    <div className="grid grid-cols-2 gap-4">
+                        <input 
+                            value={goal.description || ''} 
+                            onChange={e => onUpdate({...goal, description: e.target.value})}
+                            placeholder="Observações / Detalhes..."
+                            className="col-span-2 bg-white/5 p-2 rounded text-xs text-gray-300 focus:outline-none focus:bg-white/10"
+                        />
+                        
+                        {/* Type Specific Inputs */}
+                        {(goal.type === 'MATERIAL' || goal.type === 'LEI_SECA' || goal.type === 'QUESTOES') && (
+                            <div className="flex items-center gap-2 bg-white/5 p-2 rounded">
+                                <span className="text-[10px] text-gray-500 font-bold uppercase">Páginas/Qtd:</span>
+                                <input 
+                                    type="number"
+                                    value={goal.pages || 0}
+                                    onChange={e => onUpdate({...goal, pages: Number(e.target.value)})}
+                                    className="bg-transparent w-full text-white font-mono text-sm focus:outline-none text-right"
+                                />
+                            </div>
+                        )}
+
+                        {goal.type === 'RESUMO' && (
+                             <div className="flex items-center gap-2 bg-white/5 p-2 rounded">
+                                <span className="text-[10px] text-gray-500 font-bold uppercase">Tempo Manual (min):</span>
+                                <input 
+                                    type="number"
+                                    value={goal.manualTime || 0}
+                                    onChange={e => onUpdate({...goal, manualTime: Number(e.target.value)})}
+                                    className="bg-transparent w-full text-white font-mono text-sm focus:outline-none text-right"
+                                />
+                            </div>
+                        )}
+                        
+                        {/* Common Link/File */}
+                        <input 
+                            value={goal.link || ''} 
+                            onChange={e => onUpdate({...goal, link: e.target.value})}
+                            placeholder="Link Geral (Opcional)"
+                            className="bg-white/5 p-2 rounded text-xs text-gray-400 focus:text-white focus:outline-none"
+                        />
+                        <div className="relative">
+                            <input type="file" id={`file-${goal.id}`} className="hidden" onChange={handleFileUpload} accept="application/pdf" />
+                            <label htmlFor={`file-${goal.id}`} className={`block w-full text-center p-2 rounded cursor-pointer text-xs font-bold transition-colors ${goal.pdfUrl ? 'bg-green-900/30 text-green-500 border border-green-900' : 'bg-white/5 text-gray-500 hover:bg-white/10'}`}>
+                                {uploading ? 'ENVIANDO...' : goal.pdfUrl ? 'PDF ANEXADO' : 'ANEXAR PDF'}
+                            </label>
+                        </div>
+
+                        {/* REVISION SYSTEM CONTROL */}
+                        <div className="col-span-2 border-t border-white/5 pt-4 mt-2">
+                             <div className="flex items-center gap-2 mb-2">
+                                <input 
+                                    type="checkbox" 
+                                    id={`rev-${goal.id}`}
+                                    checked={goal.hasRevision || false}
+                                    onChange={e => onUpdate({...goal, hasRevision: e.target.checked})}
+                                    className="cursor-pointer accent-insanus-red w-4 h-4"
+                                />
+                                <label htmlFor={`rev-${goal.id}`} className="text-xs font-bold text-gray-300 cursor-pointer select-none hover:text-white flex items-center gap-2">
+                                    <Icon.RefreshCw className="w-3 h-3 text-insanus-red" />
+                                    ATIVAR REVISÕES AUTOMÁTICAS
+                                </label>
+                             </div>
+                             
+                             {goal.hasRevision && (
+                                 <div className="pl-6 space-y-2 bg-white/5 p-3 rounded-lg border border-white/5">
+                                     <div className="flex flex-col gap-1">
+                                         <label className="text-[10px] text-gray-500 uppercase font-bold">Intervalos (Dias após conclusão):</label>
+                                         <input 
+                                             value={goal.revisionIntervals || '1,7,15,30'} 
+                                             onChange={e => onUpdate({...goal, revisionIntervals: e.target.value})}
+                                             placeholder="Ex: 1, 7, 15, 30"
+                                             className="bg-black/30 p-2 rounded text-xs text-white focus:outline-none border border-white/10 w-full font-mono tracking-widest"
+                                         />
+                                         <p className="text-[9px] text-gray-600 mt-1">
+                                            Exemplo: "1,7,30" cria 3 metas de revisão. A primeira 1 dia após completar esta meta, a segunda 7 dias depois, etc.
+                                         </p>
+                                     </div>
+                                 </div>
+                             )}
+                        </div>
+                    </div>
+
+                    {/* SUBGOALS EDITOR (Only for AULA) */}
+                    {goal.type === 'AULA' && (
+                        <div className="bg-black/20 p-3 rounded border border-white/5">
+                            <div className="flex justify-between items-center mb-2">
+                                <span className="text-[10px] font-bold text-gray-500 uppercase">Aulas / Vídeos ({goal.subGoals?.length || 0})</span>
+                                <span className="text-[10px] font-mono text-insanus-red">{totalDuration} min total</span>
+                            </div>
+                            
+                            <div className="space-y-2">
+                                {goal.subGoals?.map((sub, idx) => (
+                                    <div key={sub.id} className="flex gap-2 items-center">
+                                        <span className="text-gray-600 font-mono text-xs">{idx + 1}.</span>
+                                        <input 
+                                            value={sub.title}
+                                            onChange={(e) => updateSubGoal(idx, 'title', e.target.value)}
+                                            className="flex-1 bg-white/5 p-1 px-2 rounded text-xs text-white focus:outline-none"
+                                            placeholder="Título da Aula"
+                                        />
+                                        <input 
+                                            value={sub.link}
+                                            onChange={(e) => updateSubGoal(idx, 'link', e.target.value)}
+                                            className="w-1/4 bg-white/5 p-1 px-2 rounded text-xs text-gray-400 focus:text-white focus:outline-none"
+                                            placeholder="Link URL"
+                                        />
+                                        <input 
+                                            type="number"
+                                            value={sub.duration}
+                                            onChange={(e) => updateSubGoal(idx, 'duration', Number(e.target.value))}
+                                            className="w-16 bg-white/5 p-1 px-2 rounded text-xs text-white text-center focus:outline-none"
+                                            placeholder="Min"
+                                        />
+                                        <button onClick={() => removeSubGoal(idx)} className="text-gray-600 hover:text-red-500"><Icon.Trash className="w-3 h-3" /></button>
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={addSubGoal} className="w-full mt-2 py-1 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-[10px] font-bold rounded transition">
+                                + ADICIONAR AULA
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
-      </div>
-    </div>
-  );
+    );
+};
+
+// --- PLAN DETAIL EDITOR COMPONENT ---
+interface PlanDetailEditorProps {
+    plan: StudyPlan;
+    onUpdate: (p: StudyPlan) => void;
+    onBack: () => void;
+}
+
+const PlanDetailEditor: React.FC<PlanDetailEditorProps> = ({ plan, onUpdate, onBack }) => {
+    const [tab, setTab] = useState<'struct' | 'cycles' | 'edital'>('struct');
+    const [saving, setSaving] = useState(false);
+    const [uploadingCover, setUploadingCover] = useState(false);
+    
+    // ACCORDION STATE: Tracks expanded IDs for Folders, Disciplines, and Subjects
+    const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
+
+    // Contest Input state
+    const [newContestName, setNewContestName] = useState('');
+
+    const toggleExpand = (id: string) => {
+        setExpandedMap(prev => ({ ...prev, [id]: !prev[id] }));
+    };
+
+    const isExpanded = (id: string) => !!expandedMap[id];
+    
+    // -- Save / Sync --
+    const handleSync = async () => {
+        setSaving(true);
+        try {
+            await savePlanToDB(plan);
+            // Simulate delay for feedback
+            await new Promise(r => setTimeout(r, 800)); 
+            alert("Plano sincronizado com sucesso!");
+        } catch (e) {
+            alert("Erro ao salvar.");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files || !e.target.files[0]) return;
+        setUploadingCover(true);
+        try {
+            const url = await uploadFileToStorage(e.target.files[0], 'covers');
+            onUpdate({ ...plan, coverImage: url });
+        } catch (err) {
+            alert("Erro ao enviar imagem de capa.");
+        } finally {
+            setUploadingCover(false);
+        }
+    };
+
+    // -- Contest Management (Police) --
+    const addContest = () => {
+        if(!newContestName.trim()) return;
+        const current = plan.linkedContests || [];
+        if(current.includes(newContestName.toUpperCase())) return;
+        
+        onUpdate({ ...plan, linkedContests: [...current, newContestName.toUpperCase()] });
+        setNewContestName('');
+    }
+
+    const removeContest = (name: string) => {
+        const current = plan.linkedContests || [];
+        onUpdate({ ...plan, linkedContests: current.filter(c => c !== name) });
+    }
+
+    // -- Folders --
+    const addFolder = () => {
+        const newFolder: Folder = { id: uuid(), name: 'Nova Pasta', order: plan.folders.length };
+        setExpandedMap(prev => ({ ...prev, [newFolder.id]: true })); // Auto-expand
+        onUpdate({ ...plan, folders: [...plan.folders, newFolder] });
+    };
+    const deleteFolder = (fid: string) => {
+        // When deleting a folder, we must decide what to do with disciplines inside.
+        // For safety, let's move them to "Unorganized" (folderId = undefined)
+        const updatedDisciplines = plan.disciplines.map(d => d.folderId === fid ? { ...d, folderId: undefined } : d);
+        onUpdate({ 
+            ...plan, 
+            folders: plan.folders.filter(f => f.id !== fid),
+            disciplines: updatedDisciplines as Discipline[]
+        });
+    };
+
+    // -- Disciplines --
+    const addDiscipline = (folderId?: string) => {
+        const newDisc: Discipline = { id: uuid(), name: 'Nova Disciplina', folderId, subjects: [], order: 99 };
+        setExpandedMap(prev => ({ ...prev, [newDisc.id]: true })); // Auto-expand
+        onUpdate({ ...plan, disciplines: [...plan.disciplines, newDisc] });
+    };
+    const deleteDiscipline = (did: string) => {
+        onUpdate({ ...plan, disciplines: plan.disciplines.filter(d => d.id !== did) });
+    };
+    const moveDiscipline = (discId: string, newFolderId: string) => {
+        const updatedDiscs = plan.disciplines.map(d => d.id === discId ? { ...d, folderId: newFolderId || undefined } : d);
+        onUpdate({ ...plan, disciplines: updatedDiscs as Discipline[] });
+    };
+
+    // -- Subjects --
+    const addSubject = (discId: string) => {
+        const discIndex = plan.disciplines.findIndex(d => d.id === discId);
+        if (discIndex === -1) return;
+        const newSub: Subject = { id: uuid(), name: 'Novo Assunto', goals: [], order: 99 };
+        setExpandedMap(prev => ({ ...prev, [newSub.id]: true })); // Auto-expand
+        const newDiscs = [...plan.disciplines];
+        newDiscs[discIndex].subjects.push(newSub);
+        onUpdate({ ...plan, disciplines: newDiscs });
+    };
+    const deleteSubject = (discId: string, subId: string) => {
+        const discIndex = plan.disciplines.findIndex(d => d.id === discId);
+        if (discIndex === -1) return;
+        const newDiscs = [...plan.disciplines];
+        newDiscs[discIndex].subjects = newDiscs[discIndex].subjects.filter(s => s.id !== subId);
+        onUpdate({ ...plan, disciplines: newDiscs });
+    };
+
+    // -- Goals --
+    const addGoal = (discId: string, subId: string) => {
+        const discIndex = plan.disciplines.findIndex(d => d.id === discId);
+        if (discIndex === -1) return;
+        const subIndex = plan.disciplines[discIndex].subjects.findIndex(s => s.id === subId);
+        if (subIndex === -1) return;
+
+        const newGoal: Goal = { 
+            id: uuid(), title: 'Nova Meta', type: 'AULA', order: 99,
+            link: '', pdfUrl: '', subGoals: [], pages: 0, color: '#333333'
+        };
+        const newDiscs = [...plan.disciplines];
+        newDiscs[discIndex].subjects[subIndex].goals.push(newGoal);
+        onUpdate({ ...plan, disciplines: newDiscs });
+    };
+
+    const updateGoal = (discId: string, subId: string, goal: Goal) => {
+        const discIndex = plan.disciplines.findIndex(d => d.id === discId);
+        const subIndex = plan.disciplines[discIndex].subjects.findIndex(s => s.id === subId);
+        const goalIndex = plan.disciplines[discIndex].subjects[subIndex].goals.findIndex(g => g.id === goal.id);
+        
+        const newDiscs = [...plan.disciplines];
+        newDiscs[discIndex].subjects[subIndex].goals[goalIndex] = goal;
+        onUpdate({ ...plan, disciplines: newDiscs });
+    };
+
+    const deleteGoal = (discId: string, subId: string, goalId: string) => {
+        const discIndex = plan.disciplines.findIndex(d => d.id === discId);
+        const subIndex = plan.disciplines[discIndex].subjects.findIndex(s => s.id === subId);
+        
+        const newDiscs = [...plan.disciplines];
+        newDiscs[discIndex].subjects[subIndex].goals = newDiscs[discIndex].subjects[subIndex].goals.filter(g => g.id !== goalId);
+        onUpdate({ ...plan, disciplines: newDiscs });
+    };
+
+    // -- Cycles --
+    const addCycle = () => {
+        const newCycle: Cycle = { id: uuid(), name: 'Novo Ciclo', items: [], order: plan.cycles.length };
+        onUpdate({ ...plan, cycles: [...plan.cycles, newCycle] });
+    };
+    
+    const updateCycle = (updatedCycle: Cycle) => {
+        const newCycles = plan.cycles.map(c => c.id === updatedCycle.id ? updatedCycle : c);
+        onUpdate({ ...plan, cycles: newCycles });
+    };
+
+    const deleteCycle = (cycleId: string) => {
+        onUpdate({ ...plan, cycles: plan.cycles.filter(c => c.id !== cycleId) });
+    };
+
+    // -- EDITAL VERTICALIZADO LOGIC --
+    const addEditalDiscipline = () => {
+        const newDisc: EditalDiscipline = { id: uuid(), name: 'Nova Disciplina do Edital', topics: [], order: (plan.editalVerticalizado?.length || 0) };
+        onUpdate({ ...plan, editalVerticalizado: [...(plan.editalVerticalizado || []), newDisc] });
+    };
+
+    const updateEditalDiscipline = (index: number, name: string) => {
+        const newEdital = [...(plan.editalVerticalizado || [])];
+        newEdital[index] = { ...newEdital[index], name };
+        onUpdate({ ...plan, editalVerticalizado: newEdital });
+    };
+
+    const deleteEditalDiscipline = (index: number) => {
+        const newEdital = (plan.editalVerticalizado || []).filter((_, i) => i !== index);
+        onUpdate({ ...plan, editalVerticalizado: newEdital });
+    };
+
+    const addEditalTopic = (discIndex: number) => {
+        const newTopic: EditalTopic = { id: uuid(), name: 'Novo Tópico', links: {}, order: (plan.editalVerticalizado?.[discIndex].topics.length || 0) };
+        const newEdital = [...(plan.editalVerticalizado || [])];
+        newEdital[discIndex].topics.push(newTopic);
+        onUpdate({ ...plan, editalVerticalizado: newEdital });
+    };
+
+    const updateEditalTopic = (discIndex: number, topicIndex: number, updatedTopic: EditalTopic) => {
+        const newEdital = [...(plan.editalVerticalizado || [])];
+        newEdital[discIndex].topics[topicIndex] = updatedTopic;
+        onUpdate({ ...plan, editalVerticalizado: newEdital });
+    };
+
+    const deleteEditalTopic = (discIndex: number, topicIndex: number) => {
+        const newEdital = [...(plan.editalVerticalizado || [])];
+        newEdital[discIndex].topics = newEdital[discIndex].topics.filter((_, i) => i !== topicIndex);
+        onUpdate({ ...plan, editalVerticalizado: newEdital });
+    };
+
+    // --- RENDER HELPERS ---
+    const renderDiscipline = (disc: Discipline) => (
+        <div key={disc.id} className="ml-4 border-l-2 border-white/10 pl-4 mb-6">
+            <div className="flex justify-between items-center mb-4 bg-white/5 p-2 rounded-lg hover:bg-white/10 transition">
+                <div className="flex items-center gap-3 flex-1">
+                    <button 
+                        onClick={() => toggleExpand(disc.id)}
+                        className={`text-gray-400 hover:text-white transition-transform duration-200 ${isExpanded(disc.id) ? 'rotate-180' : ''}`}
+                    >
+                        <Icon.ChevronDown className="w-5 h-5" />
+                    </button>
+                    <div className="w-2 h-2 rounded-full bg-insanus-red shadow-neon"></div>
+                    <input 
+                        value={disc.name} 
+                        onChange={e => {
+                            const newDiscs = plan.disciplines.map(d => d.id === disc.id ? {...d, name: e.target.value} : d);
+                            onUpdate({...plan, disciplines: newDiscs});
+                        }}
+                        className="bg-transparent font-bold text-gray-200 focus:outline-none text-base w-full"
+                        placeholder="Nome da Disciplina"
+                    />
+                </div>
+                
+                <div className="flex items-center gap-2">
+                    {/* FOLDER MOVER */}
+                    <select 
+                        className="bg-black text-[10px] text-gray-400 border border-white/10 rounded p-1 outline-none focus:border-white/30 max-w-[120px]"
+                        value={disc.folderId || ''}
+                        onChange={(e) => moveDiscipline(disc.id, e.target.value)}
+                    >
+                        <option value="">(Sem Pasta)</option>
+                        {plan.folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    </select>
+
+                    <button onClick={() => addSubject(disc.id)} className="text-[10px] bg-white/10 hover:bg-white/20 text-white px-3 py-1 rounded font-bold uppercase transition">+ Assunto</button>
+                    <SafeDeleteBtn onDelete={() => deleteDiscipline(disc.id)} />
+                </div>
+            </div>
+
+            {/* Subjects Accordion Body */}
+            {isExpanded(disc.id) && (
+                <div className="space-y-4 pl-2 animate-fade-in">
+                    {disc.subjects.map(sub => (
+                        <div key={sub.id} className="bg-black/40 rounded-xl border border-white/5 p-4 relative group">
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-white/10 group-hover:bg-insanus-red/50 transition-colors"></div>
+                            <div className="flex justify-between items-center mb-4">
+                                <div className="flex items-center gap-2 flex-1">
+                                    <button 
+                                        onClick={() => toggleExpand(sub.id)}
+                                        className={`text-gray-500 hover:text-white transition-transform duration-200 ${isExpanded(sub.id) ? 'rotate-180' : ''}`}
+                                    >
+                                        <Icon.ChevronDown className="w-4 h-4" />
+                                    </button>
+                                    <input 
+                                        value={sub.name} 
+                                        onChange={e => {
+                                            const idx = plan.disciplines.findIndex(d => d.id === disc.id);
+                                            const newDiscs = [...plan.disciplines];
+                                            const subIdx = newDiscs[idx].subjects.findIndex(s => s.id === sub.id);
+                                            newDiscs[idx].subjects[subIdx].name = e.target.value;
+                                            onUpdate({...plan, disciplines: newDiscs});
+                                        }}
+                                        className="bg-transparent font-bold text-insanus-red focus:text-white focus:outline-none text-sm w-full uppercase tracking-wider"
+                                        placeholder="NOME DO ASSUNTO"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={() => addGoal(disc.id, sub.id)} className="text-[10px] bg-insanus-red hover:bg-red-600 px-3 py-1 rounded text-white font-bold shadow-neon">+ META</button>
+                                    <SafeDeleteBtn onDelete={() => deleteSubject(disc.id, sub.id)} />
+                                </div>
+                            </div>
+                            
+                            {/* Goals Accordion Body */}
+                            {isExpanded(sub.id) && (
+                                <div className="space-y-2 animate-fade-in">
+                                    {sub.goals.map(goal => (
+                                        <GoalEditor 
+                                            key={goal.id} 
+                                            goal={goal} 
+                                            onUpdate={(g) => updateGoal(disc.id, sub.id, g)}
+                                            onDelete={() => deleteGoal(disc.id, sub.id, goal.id)}
+                                        />
+                                    ))}
+                                    {sub.goals.length === 0 && <div className="text-[10px] text-gray-600 italic text-center py-2">Nenhuma meta criada.</div>}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                    {disc.subjects.length === 0 && <div className="text-gray-600 italic text-xs ml-4">Nenhum assunto cadastrado.</div>}
+                </div>
+            )}
+        </div>
+    );
+
+    return (
+        <div className="flex flex-col h-full bg-black/90 text-white overflow-hidden">
+            {/* Header */}
+            <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 shrink-0 bg-black z-20">
+                <div className="flex items-center gap-4">
+                    <button onClick={onBack} className="text-gray-500 hover:text-white"><Icon.ArrowUp className="-rotate-90 w-6 h-6" /></button>
+                    <span className="text-gray-500 font-mono text-xs uppercase">Editando Plano</span>
+                </div>
+                <div className="flex gap-4">
+                    <button 
+                        onClick={handleSync}
+                        disabled={saving}
+                        className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-2 shadow-neon"
+                    >
+                        {saving ? <Icon.RefreshCw className="w-4 h-4 animate-spin" /> : <Icon.Check className="w-4 h-4" />}
+                        {saving ? 'SALVANDO...' : 'SALVAR E SINCRONIZAR'}
+                    </button>
+                    
+                    <div className="h-8 w-px bg-white/10 mx-2"></div>
+
+                    <button onClick={() => setTab('struct')} className={`px-4 py-2 text-xs font-bold rounded ${tab==='struct' ? 'bg-insanus-red text-white' : 'text-gray-500 hover:text-white'}`}>ESTRUTURA</button>
+                    <button onClick={() => setTab('cycles')} className={`px-4 py-2 text-xs font-bold rounded ${tab==='cycles' ? 'bg-insanus-red text-white' : 'text-gray-500 hover:text-white'}`}>CICLOS</button>
+                    <button onClick={() => setTab('edital')} className={`px-4 py-2 text-xs font-bold rounded flex items-center gap-2 ${tab==='edital' ? 'bg-insanus-red text-white' : 'text-gray-500 hover:text-white'}`}>
+                        <Icon.List className="w-3 h-3"/> EDITAL
+                    </button>
+                </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                
+                {/* HEADER INFO & COVER (SQUARE 1080x1080) */}
+                <div className="flex flex-col md:flex-row gap-8 mb-10 items-start border-b border-white/10 pb-8">
+                    {/* Cover Image Input (Square 1080x1080) */}
+                    <div className="shrink-0 group relative w-40 h-40 rounded-2xl border-2 border-dashed border-white/20 bg-white/5 overflow-hidden hover:border-insanus-red transition-colors shadow-lg">
+                        {plan.coverImage ? (
+                            <img src={plan.coverImage} className="w-full h-full object-cover" />
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                                <Icon.Image className="w-8 h-8 mb-2" />
+                                <span className="text-[10px] uppercase font-bold text-center px-2">Sem Capa</span>
+                            </div>
+                        )}
+                        
+                        {/* Overlay Upload Button */}
+                        <label className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white text-xs font-bold text-center p-2">
+                            {uploadingCover ? <Icon.RefreshCw className="w-6 h-6 animate-spin mb-1"/> : <Icon.Edit className="w-6 h-6 mb-1 text-insanus-red" />}
+                            {uploadingCover ? 'ENVIANDO' : 'ALTERAR CAPA (1080x1080)'}
+                            <input type="file" className="hidden" accept="image/*" onChange={handleCoverUpload} disabled={uploadingCover} />
+                        </label>
+                    </div>
+
+                    {/* Plan Info */}
+                    <div className="flex-1 pt-2">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <label className="text-xs font-bold text-insanus-red uppercase tracking-widest mb-2 block">Nome do Plano</label>
+                                <input 
+                                    value={plan.name} 
+                                    onChange={e => onUpdate({...plan, name: e.target.value})}
+                                    className="bg-transparent text-4xl font-black text-white focus:outline-none border-b border-white/10 focus:border-insanus-red placeholder-gray-700 w-full mb-6 pb-2"
+                                    placeholder="Digite o nome do plano..."
+                                />
+                            </div>
+                            
+                            {/* Category Selector */}
+                            <div className="ml-8">
+                                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1 block">Categoria</label>
+                                <select 
+                                    value={plan.category || 'CARREIRAS_POLICIAIS'} 
+                                    onChange={e => onUpdate({...plan, category: e.target.value as PlanCategory})}
+                                    className="bg-black border border-white/10 rounded-lg p-2 text-xs text-white uppercase font-bold outline-none focus:border-insanus-red"
+                                >
+                                    <option value="CARREIRAS_POLICIAIS">Carreiras Policiais</option>
+                                    <option value="CARREIRAS_TRIBUNAIS">Carreiras de Tribunais</option>
+                                    <option value="CARREIRAS_ADMINISTRATIVAS">Carreiras Administrativas</option>
+                                    <option value="CARREIRAS_JURIDICAS">Carreiras Jurídicas</option>
+                                    <option value="ENEM">ENEM</option>
+                                    <option value="OUTROS">Outros</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-4">
+                             <div className="bg-white/5 px-6 py-3 rounded-xl border border-white/10 flex flex-col">
+                                <span className="text-2xl font-black text-white leading-none">{plan.disciplines.length}</span>
+                                <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider mt-1">Disciplinas</span>
+                             </div>
+                             <div className="bg-white/5 px-6 py-3 rounded-xl border border-white/10 flex flex-col">
+                                <span className="text-2xl font-black text-white leading-none">{plan.cycles.length}</span>
+                                <span className="text-[9px] text-gray-500 uppercase font-bold tracking-wider mt-1">Ciclos</span>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                {tab === 'struct' && (
+                    <div className="max-w-6xl mx-auto space-y-12">
+                        
+                        {/* UNORGANIZED DISCIPLINES SECTION */}
+                        <div className="glass rounded-xl border border-white/10 overflow-hidden">
+                            <div className="bg-gradient-to-r from-gray-900 to-black p-4 flex justify-between items-center border-b border-white/10">
+                                <div className="flex items-center gap-3">
+                                    <Icon.BookOpen className="w-5 h-5 text-gray-400" />
+                                    <span className="font-black text-gray-200 uppercase tracking-widest text-sm">Disciplinas Gerais (Sem Pasta)</span>
+                                </div>
+                                <button onClick={() => addDiscipline()} className="text-[10px] bg-white/10 hover:bg-white/20 text-white px-3 py-1 rounded font-bold transition">+ NOVA DISCIPLINA</button>
+                            </div>
+                            <div className="p-6 bg-black/20">
+                                {plan.disciplines.filter(d => !d.folderId).map(renderDiscipline)}
+                                {plan.disciplines.filter(d => !d.folderId).length === 0 && (
+                                    <div className="text-center py-8 text-gray-600 text-xs font-mono border border-dashed border-white/5 rounded">
+                                        Nenhuma disciplina solta. Crie uma aqui ou mova de uma pasta.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* FOLDERS SECTION */}
+                        <div className="space-y-8">
+                            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                                <h3 className="text-lg font-black text-white uppercase">Pastas de Organização</h3>
+                                <button onClick={addFolder} className="text-xs bg-insanus-red hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-2">
+                                    <Icon.FolderPlus className="w-4 h-4" /> NOVA PASTA
+                                </button>
+                            </div>
+
+                            {plan.folders.map(folder => (
+                                <div key={folder.id} className="glass rounded-xl border border-white/5 overflow-hidden transition-all duration-300">
+                                    <div className="bg-white/5 p-4 flex justify-between items-center border-b border-white/5">
+                                        <div className="flex items-center gap-3">
+                                            <button 
+                                                onClick={() => toggleExpand(folder.id)}
+                                                className={`text-gray-400 hover:text-white transition-transform duration-200 ${isExpanded(folder.id) ? 'rotate-180' : ''}`}
+                                            >
+                                                <Icon.ChevronDown className="w-5 h-5" />
+                                            </button>
+                                            <Icon.Folder className="w-5 h-5 text-insanus-red" />
+                                            <input 
+                                                value={folder.name} 
+                                                onChange={e => {
+                                                    const newFolders = plan.folders.map(f => f.id === folder.id ? {...f, name: e.target.value} : f);
+                                                    onUpdate({...plan, folders: newFolders});
+                                                }}
+                                                className="bg-transparent font-bold text-white focus:outline-none w-64 text-lg"
+                                            />
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={() => addDiscipline(folder.id)} className="text-[10px] bg-insanus-red/20 text-insanus-red px-3 py-1 rounded hover:bg-insanus-red hover:text-white font-bold transition">+ DISCIPLINA</button>
+                                            <SafeDeleteBtn onDelete={() => deleteFolder(folder.id)} />
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Folder Accordion Body */}
+                                    {isExpanded(folder.id) && (
+                                        <div className="p-6 animate-fade-in">
+                                            {plan.disciplines.filter(d => d.folderId === folder.id).map(renderDiscipline)}
+                                            {plan.disciplines.filter(d => d.folderId === folder.id).length === 0 && (
+                                                <div className="text-xs text-gray-600 italic ml-4">Esta pasta está vazia. Adicione disciplinas ou mova disciplinas existentes para cá.</div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                {tab === 'cycles' && (
+                    <div className="max-w-4xl mx-auto">
+                         <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
+                            <div>
+                                <h3 className="text-2xl font-black text-white uppercase">Gestão de Ciclos</h3>
+                                <p className="text-gray-500 text-xs">Crie sequências de estudo rotativas.</p>
+                            </div>
+                            <button onClick={addCycle} className="bg-insanus-red hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-2">
+                                <Icon.Plus className="w-4 h-4" /> NOVO CICLO
+                            </button>
+                        </div>
+                        
+                        {plan.cycles.length === 0 ? (
+                             <div className="flex flex-col items-center justify-center h-64 text-gray-500 border border-dashed border-white/10 rounded-2xl">
+                                <Icon.RefreshCw className="w-12 h-12 mb-4 opacity-50"/>
+                                <p>Nenhum ciclo criado.</p>
+                                <button onClick={addCycle} className="mt-4 text-insanus-red hover:underline text-sm font-bold">Criar Primeiro Ciclo</button>
+                            </div>
+                        ) : (
+                            <div>
+                                {plan.cycles.map(cycle => (
+                                    <CycleEditor 
+                                        key={cycle.id}
+                                        cycle={cycle}
+                                        allDisciplines={plan.disciplines}
+                                        onUpdate={updateCycle}
+                                        onDelete={() => deleteCycle(cycle.id)}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* EDITAL VERTICALIZADO TAB */}
+                {tab === 'edital' && (
+                    <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
+                         <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
+                            <div>
+                                <h3 className="text-2xl font-black text-white uppercase">Edital Verticalizado</h3>
+                                <p className="text-gray-500 text-xs">Organize os tópicos do edital e vincule as metas para controle do aluno.</p>
+                            </div>
+                            <button onClick={addEditalDiscipline} className="bg-insanus-red hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-2">
+                                <Icon.Plus className="w-4 h-4" /> NOVA DISCIPLINA DO EDITAL
+                            </button>
+                        </div>
+
+                        {/* POLICE CONTEST IDENTIFIER (Optional Feature) */}
+                        {plan.category === 'CARREIRAS_POLICIAIS' && (
+                            <div className="mb-8 p-6 bg-white/5 border border-white/10 rounded-xl">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h4 className="text-lg font-bold text-white uppercase flex items-center gap-2">
+                                        <Icon.User className="w-5 h-5 text-insanus-red" />
+                                        IDENTIFICAR CONCURSOS (FACULTATIVO)
+                                    </h4>
+                                </div>
+                                <div className="flex gap-2 mb-4">
+                                    <input 
+                                        value={newContestName}
+                                        onChange={(e) => setNewContestName(e.target.value)}
+                                        className="bg-black border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-insanus-red flex-1"
+                                        placeholder="Digite a sigla do concurso (Ex: PF, PRF, PC-SP)..."
+                                    />
+                                    <button onClick={addContest} className="bg-insanus-red text-white px-6 rounded-lg font-bold text-xs uppercase hover:bg-red-600 transition">Adicionar</button>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                    {plan.linkedContests?.map(c => (
+                                        <div key={c} className="bg-insanus-red/20 border border-insanus-red text-insanus-red px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2">
+                                            {c}
+                                            <button onClick={() => removeContest(c)} className="hover:text-white"><Icon.Trash className="w-3 h-3" /></button>
+                                        </div>
+                                    ))}
+                                    {(!plan.linkedContests || plan.linkedContests.length === 0) && (
+                                        <p className="text-gray-600 text-xs italic">Nenhum concurso identificado.</p>
+                                    )}
+                                </div>
+                                <p className="text-[10px] text-gray-500 mt-2 italic">
+                                    * Adicione os concursos para habilitar a marcação específica em cada tópico do edital abaixo.
+                                </p>
+                            </div>
+                        )}
+
+                        {(!plan.editalVerticalizado || plan.editalVerticalizado.length === 0) ? (
+                             <div className="flex flex-col items-center justify-center h-64 text-gray-500 border border-dashed border-white/10 rounded-2xl">
+                                <Icon.List className="w-12 h-12 mb-4 opacity-50"/>
+                                <p>O Edital Verticalizado ainda não foi configurado.</p>
+                                <button onClick={addEditalDiscipline} className="mt-4 text-insanus-red hover:underline text-sm font-bold">Criar Estrutura do Edital</button>
+                            </div>
+                        ) : (
+                            <div className="grid gap-8">
+                                {plan.editalVerticalizado.map((disc, dIdx) => (
+                                    <div key={disc.id} className="glass rounded-xl border border-white/5 overflow-hidden">
+                                        <div className="bg-white/5 p-4 flex justify-between items-center border-b border-white/5">
+                                            <div className="flex items-center gap-3 flex-1">
+                                                <div className="w-2 h-8 bg-insanus-red rounded"></div>
+                                                <input 
+                                                    value={disc.name} 
+                                                    onChange={e => updateEditalDiscipline(dIdx, e.target.value)}
+                                                    className="bg-transparent font-black text-white focus:outline-none w-full text-lg uppercase"
+                                                    placeholder="NOME DA DISCIPLINA DO EDITAL"
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <button onClick={() => addEditalTopic(dIdx)} className="text-[10px] bg-insanus-red/20 text-insanus-red px-3 py-1 rounded hover:bg-insanus-red hover:text-white font-bold transition">+ TÓPICO</button>
+                                                <SafeDeleteBtn onDelete={() => deleteEditalDiscipline(dIdx)} />
+                                            </div>
+                                        </div>
+
+                                        <div className="p-4 bg-black/40">
+                                            {disc.topics.map((topic, tIdx) => (
+                                                <EditalTopicEditor 
+                                                    key={topic.id}
+                                                    topic={topic}
+                                                    plan={plan}
+                                                    onUpdate={(updatedTopic) => updateEditalTopic(dIdx, tIdx, updatedTopic)}
+                                                    onDelete={() => deleteEditalTopic(dIdx, tIdx)}
+                                                />
+                                            ))}
+                                            {disc.topics.length === 0 && (
+                                                <div className="text-center text-gray-600 text-xs italic py-4">
+                                                    Nenhum tópico cadastrado nesta disciplina.
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+interface AdminDashboardProps {
+    user: User;
+    onSwitchToUser: () => void;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onSwitchToUser }) => {
+    const [view, setView] = useState<'users' | 'plans'>('plans');
+    const [users, setUsers] = useState<User[]>([]);
+    const [plans, setPlans] = useState<StudyPlan[]>([]);
+    const [editingPlan, setEditingPlan] = useState<StudyPlan | null>(null);
+
+    // Initial Fetch
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    const loadData = async () => {
+        const u = await fetchUsersFromDB();
+        const p = await fetchPlansFromDB();
+        setUsers(u);
+        setPlans(p);
+    };
+
+    // USER ACTIONS
+    const handleCreateUser = async () => {
+        const name = prompt("Nome do Aluno:");
+        if (!name) return;
+        const email = prompt("E-mail do Aluno:");
+        if (!email) return;
+        const password = prompt("Senha Temporária:");
+        if (!password) return;
+
+        const newUser: User = {
+            id: uuid(),
+            name,
+            email,
+            cpf: '000.000.000-00',
+            level: 'iniciante',
+            isAdmin: false,
+            allowedPlans: [],
+            planExpirations: {},
+            planConfigs: {},
+            routine: { days: {} },
+            progress: { completedGoalIds: [], completedRevisionIds: [], totalStudySeconds: 0, planStudySeconds: {} },
+            tempPassword: password
+        };
+        await saveUserToDB(newUser);
+        loadData();
+    };
+
+    const handleDeleteUser = async (uid: string) => {
+        if (!confirm("Tem certeza que deseja remover este aluno?")) return;
+        await deleteUserFromDB(uid);
+        loadData();
+    };
+
+    const handleTogglePlanAccess = async (user: User, planId: string) => {
+        const hasAccess = user.allowedPlans?.includes(planId);
+        let newAllowed = [...(user.allowedPlans || [])];
+        if (hasAccess) {
+            newAllowed = newAllowed.filter(id => id !== planId);
+        } else {
+            newAllowed.push(planId);
+        }
+        const updatedUser = { ...user, allowedPlans: newAllowed };
+        await saveUserToDB(updatedUser);
+        setUsers(users.map(u => u.id === user.id ? updatedUser : u));
+    };
+
+    // PLAN ACTIONS
+    const handleCreatePlan = async () => {
+        const name = prompt("Nome do Novo Plano:");
+        if (!name) return;
+        const newPlan: StudyPlan = {
+            id: uuid(),
+            name,
+            category: 'CARREIRAS_POLICIAIS', // Default category
+            coverImage: '',
+            folders: [],
+            disciplines: [],
+            cycles: [],
+            cycleSystem: 'rotativo',
+            editalVerticalizado: []
+        };
+        await savePlanToDB(newPlan);
+        loadData();
+    };
+
+    const handleDeletePlan = async (pid: string) => {
+        if (!confirm("Tem certeza? Isso apagará todo o conteúdo do plano.")) return;
+        await deletePlanFromDB(pid);
+        loadData();
+    };
+
+    const handleUpdatePlan = async (updatedPlan: StudyPlan) => {
+        setEditingPlan(updatedPlan); // Update local state immediately for UI responsiveness
+    };
+
+    if (editingPlan) {
+        // Render Editor with sidebar hidden or visible? 
+        // Typically editor needs space. I'll hide sidebar for editing mode to focus.
+        // Wait, prompt said restore sidebar design. If I hide it here, it's not restoring it fully if the previous one had it.
+        // But the previous one (Turn 1) had logic: `{tab === 'users' ? <UsersManager /> : <PlanEditor />}` inside the content area.
+        // `PlanEditor` listed plans. When clicking "EDIT", it set `selectedPlan`.
+        // `PlanDetailEditor` was rendered.
+        // So the Sidebar WAS visible.
+        
+        // I will implement Sidebar layout and render PlanDetailEditor inside the content area.
+    }
+
+    return (
+        <div className="flex w-full h-full bg-insanus-black text-gray-200">
+            {/* SIDEBAR NAVIGATION */}
+            <div className="w-20 lg:w-72 bg-black/50 border-r border-white/10 flex flex-col shrink-0 backdrop-blur-md z-30">
+                <div className="p-6 border-b border-white/5 flex items-center justify-center lg:justify-start gap-3">
+                    <div className="w-8 h-8 bg-insanus-red rounded shadow-neon shrink-0"></div>
+                    <div className="hidden lg:block"><h1 className="text-white font-black text-lg">INSANUS<span className="text-insanus-red">.ADMIN</span></h1></div>
+                </div>
+                
+                <nav className="flex-1 p-4 space-y-2">
+                    <button 
+                        onClick={() => { setView('plans'); setEditingPlan(null); }} 
+                        className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'plans' ? 'bg-gradient-to-r from-insanus-red to-red-900 text-white shadow-neon' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                    >
+                        <Icon.Book className="w-5 h-5" />
+                        <span className="hidden lg:block font-bold text-sm">Meus Planos</span>
+                    </button>
+                    
+                    <button 
+                        onClick={() => { setView('users'); setEditingPlan(null); }} 
+                        className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'users' ? 'bg-gradient-to-r from-insanus-red to-red-900 text-white shadow-neon' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                    >
+                        <Icon.User className="w-5 h-5" />
+                        <span className="hidden lg:block font-bold text-sm">Gestão de Alunos</span>
+                    </button>
+                </nav>
+
+                <div className="p-4 border-t border-white/5">
+                    <button onClick={onSwitchToUser} className="w-full bg-white/5 hover:bg-white/10 text-gray-300 p-3 rounded-xl flex items-center justify-center lg:justify-start gap-3 transition-all border border-transparent hover:border-white/10">
+                        <Icon.Eye className="w-5 h-5 text-insanus-red" />
+                        <span className="hidden lg:block font-bold text-sm">Visão do Aluno</span>
+                    </button>
+                </div>
+            </div>
+
+            {/* MAIN CONTENT */}
+            <div className="flex-1 overflow-hidden relative flex flex-col">
+                <div className="absolute inset-0 bg-tech-grid opacity-10 pointer-events-none" />
+                
+                {/* Scrollable Area */}
+                <div className="flex-1 overflow-y-auto p-8 custom-scrollbar relative z-10">
+                    
+                    {/* Render Plan Detail Editor if editing */}
+                    {editingPlan ? (
+                        <PlanDetailEditor 
+                            plan={editingPlan} 
+                            onUpdate={handleUpdatePlan}
+                            onBack={() => { setEditingPlan(null); loadData(); }} 
+                        />
+                    ) : (
+                        <>
+                            {view === 'users' && (
+                                <div className="max-w-6xl mx-auto animate-fade-in">
+                                    <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
+                                        <div>
+                                            <h2 className="text-3xl font-black text-white">ALUNOS <span className="text-insanus-red">CADASTRADOS</span></h2>
+                                            <p className="text-gray-500 text-xs mt-1">Gerencie o acesso aos planos de estudo.</p>
+                                        </div>
+                                        <button onClick={handleCreateUser} className="bg-insanus-red hover:bg-red-600 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 shadow-neon transition-transform hover:scale-105">
+                                            <Icon.Plus className="w-4 h-4" /> NOVO ALUNO
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="grid gap-4">
+                                        {users.filter(u => !u.isAdmin).map(u => (
+                                            <div key={u.id} className="glass p-5 rounded-xl border border-white/5 flex flex-col md:flex-row items-center justify-between hover:border-white/20 transition gap-4">
+                                                <div className="flex items-center gap-4 w-full md:w-auto">
+                                                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-gray-800 to-black border border-white/10 flex items-center justify-center font-bold text-white text-lg">
+                                                        {u.name.charAt(0)}
+                                                    </div>
+                                                    <div>
+                                                        <div className="font-bold text-white text-lg">{u.name}</div>
+                                                        <div className="text-xs text-gray-500 font-mono">{u.email}</div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
+                                                    <div className="flex flex-col gap-1 items-end">
+                                                        <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">Acesso Liberado:</span>
+                                                        <div className="flex flex-wrap justify-end gap-2">
+                                                            {plans.map(p => (
+                                                                <button 
+                                                                    key={p.id}
+                                                                    onClick={() => handleTogglePlanAccess(u, p.id)}
+                                                                    className={`text-[10px] px-2 py-1 rounded border font-bold uppercase transition-all ${u.allowedPlans?.includes(p.id) ? 'bg-insanus-red/20 border-insanus-red text-insanus-red hover:bg-insanus-red/30' : 'bg-black border-gray-800 text-gray-600 hover:border-gray-600 hover:text-gray-400'}`}
+                                                                >
+                                                                    {p.name}
+                                                                </button>
+                                                            ))}
+                                                            {plans.length === 0 && <span className="text-[10px] text-gray-700 italic">Sem planos disponíveis</span>}
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div className="h-8 w-px bg-white/10 mx-2 hidden md:block"></div>
+
+                                                    <SafeDeleteBtn onDelete={() => handleDeleteUser(u.id)} className="bg-black/40 p-3 rounded-lg hover:bg-red-900/50 hover:text-white border border-white/5 hover:border-red-500/30 transition-all" />
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {users.filter(u => !u.isAdmin).length === 0 && (
+                                            <div className="text-center py-20 text-gray-600 border border-dashed border-white/10 rounded-xl bg-white/5 flex flex-col items-center">
+                                                <Icon.User className="w-12 h-12 mb-4 opacity-20" />
+                                                <p>Nenhum aluno encontrado.</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {view === 'plans' && (
+                                <div className="max-w-6xl mx-auto animate-fade-in">
+                                    <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
+                                        <div>
+                                            <h2 className="text-3xl font-black text-white">PLANOS DE <span className="text-insanus-red">ESTUDO</span></h2>
+                                            <p className="text-gray-500 text-xs mt-1">Crie e edite os planejamentos disponíveis.</p>
+                                        </div>
+                                        <button onClick={handleCreatePlan} className="bg-insanus-red hover:bg-red-600 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 shadow-neon transition-transform hover:scale-105">
+                                            <Icon.Plus className="w-4 h-4" /> NOVO PLANO
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                        {plans.map(p => (
+                                            <div key={p.id} className="glass rounded-2xl overflow-hidden border border-white/5 hover:border-insanus-red/50 transition-all group relative h-72 flex flex-col">
+                                                <div className="h-40 bg-black/50 relative overflow-hidden">
+                                                    {p.coverImage ? (
+                                                        <img src={p.coverImage} className="w-full h-full object-cover opacity-50 group-hover:opacity-80 group-hover:scale-105 transition duration-700" />
+                                                    ) : (
+                                                        <div className="w-full h-full flex items-center justify-center bg-gray-900 text-gray-700">
+                                                            <Icon.Image className="w-8 h-8" />
+                                                        </div>
+                                                    )}
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-insanus-black to-transparent" />
+                                                    
+                                                    {/* Actions Overlay */}
+                                                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 gap-3 backdrop-blur-sm">
+                                                        <button onClick={() => setEditingPlan(p)} className="bg-white text-black px-4 py-2 rounded-lg font-bold text-xs hover:bg-gray-200 flex items-center gap-2 shadow-lg transform hover:scale-105 transition">
+                                                            <Icon.Edit className="w-4 h-4" /> EDITAR
+                                                        </button>
+                                                        <SafeDeleteBtn onDelete={() => handleDeletePlan(p.id)} className="bg-red-600 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-red-700 hover:text-white shadow-lg flex items-center gap-2" label="EXCLUIR" />
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="p-5 flex-1 flex flex-col justify-between">
+                                                    <div>
+                                                        <h3 className="font-black text-white text-xl leading-tight mb-1 group-hover:text-insanus-red transition-colors line-clamp-2">{p.name}</h3>
+                                                        <div className="h-1 w-12 bg-insanus-red rounded-full mb-3"></div>
+                                                    </div>
+                                                    
+                                                    <div className="flex justify-between text-[10px] text-gray-500 font-mono border-t border-white/5 pt-3 uppercase tracking-widest">
+                                                        <div className="flex items-center gap-1"><Icon.Book className="w-3 h-3" /> {p.disciplines.length} Disciplinas</div>
+                                                        <div className="flex items-center gap-1"><Icon.RefreshCw className="w-3 h-3" /> {p.cycles.length} Ciclos</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {plans.length === 0 && (
+                                        <div className="text-center py-20 text-gray-600 border border-dashed border-white/10 rounded-xl bg-white/5 flex flex-col items-center">
+                                            <Icon.Book className="w-12 h-12 mb-4 opacity-20" />
+                                            <p>Nenhum plano criado.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
 };

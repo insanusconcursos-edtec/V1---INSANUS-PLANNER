@@ -1,5 +1,5 @@
 import { db } from '../firebase';
-import { collection, doc, setDoc, getDocs, getDoc, query, where, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, getDoc, query, where, deleteDoc, writeBatch } from 'firebase/firestore';
 import { User, StudyPlan } from '../types';
 
 // Helper to remove undefined fields because Firestore doesn't support them.
@@ -90,23 +90,91 @@ export const fetchPlansFromDB = async (): Promise<StudyPlan[]> => {
   }
 };
 
+export const deletePlanFromDB = async (planId: string) => {
+    try {
+        await deleteDoc(doc(db, "plans", planId));
+        console.log("Plano deletado:", planId);
+    } catch (e) {
+        console.error("Erro ao deletar plano:", e);
+        throw e;
+    }
+};
+
+// --- DANGER ZONE: RESET FULL DATABASE ---
+export const resetFullDatabase = async () => {
+    try {
+        console.log(">>> INICIANDO RESET TOTAL DO BANCO DE DADOS...");
+        
+        const collectionsToCheck = ["plans", "users"];
+        let totalDeleted = 0;
+
+        for (const colName of collectionsToCheck) {
+            console.log(`Lendo coleção: ${colName}...`);
+            const snapshot = await getDocs(collection(db, colName));
+            
+            if (snapshot.empty) {
+                console.log(`Coleção ${colName} está vazia.`);
+                continue;
+            }
+
+            const docs = snapshot.docs;
+            console.log(`Encontrados ${docs.length} documentos em ${colName}. Iniciando deleção em lotes...`);
+
+            // Firestore Batch Limit is 500. We use 300 to be safe.
+            const CHUNK_SIZE = 300;
+            const chunks = [];
+            for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+                chunks.push(docs.slice(i, i + CHUNK_SIZE));
+            }
+
+            for (const chunk of chunks) {
+                const batch = writeBatch(db);
+                chunk.forEach(d => batch.delete(d.ref));
+                await batch.commit();
+                totalDeleted += chunk.length;
+                console.log(`Lote deletado: ${chunk.length} itens removidos de ${colName}.`);
+            }
+        }
+        
+        console.log(`>>> RESET CONCLUÍDO. Total deletados: ${totalDeleted}`);
+        return totalDeleted;
+    } catch (e: any) {
+        console.error(">>> ERRO FATAL NO RESET:", e);
+        throw new Error(e.message || "Erro desconhecido ao limpar banco.");
+    }
+};
+
+export const clearAllPlansDB = async () => {
+    await resetFullDatabase();
+};
+
 // --- Auth Helper (Simulated for Admin-created users) ---
 
 export const authenticateUserDB = async (email: string, password: string): Promise<User | null> => {
     try {
+        console.log(`[AUTH] Tentando autenticar: ${email}`);
+        
         // Query users where email matches
         const q = query(collection(db, "users"), where("email", "==", email));
         const querySnapshot = await getDocs(q);
         
+        if (querySnapshot.empty) {
+            console.warn(`[AUTH] Usuário não encontrado com o e-mail: ${email}`);
+            return null;
+        }
+
         let foundUser: User | null = null;
         
         querySnapshot.forEach((doc) => {
-            const userData = doc.data() as any;
+            const userData = doc.data() as User;
             if (!userData.id) userData.id = doc.id;
             
-            // Check password (plain text as per requirement "Admin creates users with standard password")
+            // Check password (now using explicit tempPassword field)
             if (userData.tempPassword === password) {
-                foundUser = userData as User;
+                console.log(`[AUTH] Senha correta para: ${userData.name}`);
+                foundUser = userData;
+            } else {
+                console.warn(`[AUTH] Senha incorreta para usuário encontrado: ${userData.name}`);
             }
         });
 

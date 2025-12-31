@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { User, StudyPlan, ScheduledItem, Routine, Goal, SubGoal, UserProgress, GoalType, PlanConfig, Discipline, Subject, UserLevel } from '../types';
 import { Icon } from '../components/Icons';
 import { WEEKDAYS, calculateGoalDuration, uuid } from '../constants';
-import { PDFViewer } from '../components/PDFViewer';
 import { fetchPlansFromDB, saveUserToDB } from '../services/db';
+import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 
 interface Props {
   user: User;
@@ -28,7 +28,6 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, user: User): Record
     interface SchedulableUnit {
         id: string; // unique ID for queue
         goal: Goal;
-        subGoal?: SubGoal;
         discipline: string;
         subject: string;
         duration: number;
@@ -45,46 +44,43 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, user: User): Record
                 d.subjects.forEach(s => {
                     if (s.goals) {
                         s.goals.forEach(g => {
+                            // GROUPING LOGIC FIX:
+                            // Instead of creating one item per subgoal, we calculate the TOTAL remaining duration
+                            // of the goal based on uncompleted subgoals.
+                            
+                            let duration = 0;
+                            let isFullyCompleted = false;
+
                             if (g.type === 'AULA' && g.subGoals && g.subGoals.length > 0) {
-                                // Break down into SubGoals
-                                g.subGoals.forEach(sub => {
-                                    const compositeId = `${g.id}::${sub.id}`;
-                                    const isDone = user.progress?.completedGoalIds?.includes(compositeId);
-                                    
-                                    // FILTER: Only add if NOT completed. 
-                                    // This allows "Replan" (Start Date = Today) to effectively verify what is left to do.
-                                    // Completed items effectively become "History" and are not re-scheduled.
-                                    if (!isDone) {
-                                        queue.push({
-                                            id: compositeId,
-                                            goal: g,
-                                            subGoal: sub,
-                                            discipline: d.name,
-                                            subject: s.name,
-                                            duration: sub.duration || 30,
-                                            originalDuration: sub.duration || 30,
-                                            title: sub.title,
-                                            completed: false
-                                        });
-                                    }
-                                });
-                            } else {
-                                // Standard Goal
-                                const duration = calculateGoalDuration(g, user.level);
-                                const isDone = user.progress?.completedGoalIds?.includes(g.id);
+                                // Calculate duration of pending subgoals
+                                const pendingSubGoals = g.subGoals.filter(sub => 
+                                    !user.progress?.completedGoalIds?.includes(`${g.id}::${sub.id}`)
+                                );
                                 
-                                if (!isDone) {
-                                    queue.push({
-                                        id: g.id,
-                                        goal: g,
-                                        discipline: d.name,
-                                        subject: s.name,
-                                        duration: duration,
-                                        originalDuration: duration,
-                                        title: g.title,
-                                        completed: false
-                                    });
+                                if (pendingSubGoals.length === 0 && g.subGoals.length > 0) {
+                                    isFullyCompleted = true; // All subgoals done
+                                } else {
+                                    // Sum duration of pending items
+                                    duration = pendingSubGoals.reduce((acc, sub) => acc + (sub.duration || 30), 0);
                                 }
+                            } else {
+                                // Standard Goal (PDF, Exercises, etc)
+                                duration = calculateGoalDuration(g, user.level);
+                                isFullyCompleted = user.progress?.completedGoalIds?.includes(g.id);
+                            }
+
+                            // Only schedule if not fully completed
+                            if (!isFullyCompleted && duration > 0) {
+                                queue.push({
+                                    id: g.id,
+                                    goal: g,
+                                    discipline: d.name,
+                                    subject: s.name,
+                                    duration: duration,
+                                    originalDuration: duration,
+                                    title: g.title,
+                                    completed: false
+                                });
                             }
                         });
                     }
@@ -129,7 +125,6 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, user: User): Record
                         uniqueId: `${dateStr}_${item.id}_${uuid()}`,
                         date: dateStr,
                         goalId: item.goal.id,
-                        subGoalId: item.subGoal?.id,
                         goalType: item.goal.type,
                         title: item.title,
                         disciplineName: item.discipline,
@@ -156,7 +151,6 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, user: User): Record
                         uniqueId: `${dateStr}_${item.id}_part1_${uuid()}`,
                         date: dateStr,
                         goalId: item.goal.id,
-                        subGoalId: item.subGoal?.id,
                         goalType: item.goal.type,
                         title: `${item.title} (Parte 1)`,
                         disciplineName: item.discipline,
@@ -212,7 +206,7 @@ const CalendarHeader = ({ currentDate, mode, onPrev, onNext, onModeChange }: any
 // --- Main Component ---
 
 export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToAdmin }) => {
-  const [view, setView] = useState<'config' | 'calendar' | 'daily'>('daily');
+  const [view, setView] = useState<'config' | 'calendar' | 'daily' | 'edital'>('daily');
   const [plans, setPlans] = useState<StudyPlan[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<StudyPlan | null>(null);
   
@@ -229,10 +223,16 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const [activeTimer, setActiveTimer] = useState<string | null>(null); 
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
-  const [activePDF, setActivePDF] = useState<string | null>(null);
   
-  // Accordion State
-  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  // PDF Processing State
+  const [processingPdf, setProcessingPdf] = useState<string | null>(null);
+  
+  // Accordion State for Goal Cards (Subgoals visibility)
+  const [expandedGoals, setExpandedGoals] = useState<Record<string, boolean>>({});
+
+  const toggleGoalExpand = (id: string) => {
+      setExpandedGoals(prev => ({ ...prev, [id]: !prev[id] }));
+  };
 
   useEffect(() => {
       if (user.routine) {
@@ -267,7 +267,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       
       // Pass the config derived from User state
       return generateSchedule(selectedPlan, safeRoutine, user);
-  }, [selectedPlan, user.routine, user.level, user.progress?.completedGoalIds?.length, user.planConfigs]);
+  }, [selectedPlan, user.routine, user.level, user.progress?.completedGoalIds, user.planConfigs]);
 
   useEffect(() => {
     let interval: any;
@@ -277,6 +277,63 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
     return () => clearInterval(interval);
   }, [activeTimer, isPaused]);
 
+  // --- SECURE PDF HANDLER (Embed Watermark & Native Open) ---
+  const handleOpenSecurePdf = async (url: string) => {
+      setProcessingPdf(url);
+      
+      try {
+          // 1. Fetch original PDF
+          const response = await fetch(url);
+          const existingPdfBytes = await response.arrayBuffer();
+
+          // 2. Load PDF into pdf-lib
+          const pdfDoc = await PDFDocument.load(existingPdfBytes);
+          const pages = pdfDoc.getPages();
+          
+          // 3. Embed font (Standard Helvetica is lightweight)
+          const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+          const fontSize = 10;
+          const text = `${user.name} - ${user.cpf}`;
+
+          // 4. Draw Watermark on EVERY page
+          pages.forEach((page) => {
+              const { width, height } = page.getSize();
+              const xStep = 200;
+              const yStep = 200;
+
+              for (let x = -100; x < width + 100; x += xStep) {
+                  for (let y = -100; y < height + 100; y += yStep) {
+                      page.drawText(text, {
+                          x,
+                          y,
+                          size: fontSize,
+                          font: font,
+                          color: rgb(1, 0.2, 0.2), // Red
+                          opacity: 0.15, // Very soft opacity
+                          rotate: degrees(45), 
+                      });
+                  }
+              }
+          });
+
+          // 5. Save the modified PDF
+          const pdfBytes = await pdfDoc.save();
+          
+          // 6. Create Blob & Open in New Tab
+          const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+          const blobUrl = URL.createObjectURL(blob);
+          
+          window.open(blobUrl, '_blank');
+
+      } catch (error) {
+          console.error("Erro ao processar PDF:", error);
+          alert("Não foi possível carregar o documento seguro. Verifique sua conexão.");
+      } finally {
+          setProcessingPdf(null);
+      }
+  };
+
+
   const handleStart = (id: string) => {
       if (activeTimer === id) return;
       setActiveTimer(id);
@@ -284,6 +341,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       setIsPaused(false);
   };
 
+  // General Finish (for standard goals or bulk finish)
   const handleFinish = async (item: ScheduledItem) => {
       setActiveTimer(null);
       const newProgress = user.progress 
@@ -293,10 +351,9 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       if (!newProgress.completedGoalIds) newProgress.completedGoalIds = [];
       if (!newProgress.planStudySeconds) newProgress.planStudySeconds = {};
       
-      const idToMark = item.subGoalId ? `${item.goalId}::${item.subGoalId}` : item.goalId;
-      
-      if (!newProgress.completedGoalIds.includes(idToMark)) {
-          newProgress.completedGoalIds.push(idToMark);
+      // If it's a standard goal, mark the goal ID
+      if (!newProgress.completedGoalIds.includes(item.goalId)) {
+          newProgress.completedGoalIds.push(item.goalId);
       }
       
       // Update Timers
@@ -310,6 +367,29 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       onUpdateUser(updatedUser); 
       try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
   };
+
+  // Specific Subgoal Check (for AULA type)
+  const handleCheckSubGoal = async (goalId: string, subGoalId: string) => {
+      const newProgress = user.progress 
+        ? { ...user.progress } 
+        : { completedGoalIds: [], completedRevisionIds: [], totalStudySeconds: 0, planStudySeconds: {} };
+      
+      if (!newProgress.completedGoalIds) newProgress.completedGoalIds = [];
+      
+      const compositeId = `${goalId}::${subGoalId}`;
+      
+      if (newProgress.completedGoalIds.includes(compositeId)) {
+          // Uncheck
+          newProgress.completedGoalIds = newProgress.completedGoalIds.filter(id => id !== compositeId);
+      } else {
+          // Check
+          newProgress.completedGoalIds.push(compositeId);
+      }
+      
+      const updatedUser = { ...user, progress: newProgress };
+      onUpdateUser(updatedUser);
+      try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
+  }
 
   const handleSaveRoutine = async () => {
       setSaveStatus('saving');
@@ -589,477 +669,246 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       );
   };
 
-  const renderDaily = () => {
-      const today = new Date().toISOString().split('T')[0];
-      const todaysItems = (schedule[today] || []) as ScheduledItem[];
-      const hasRoutine = user.routine && user.routine.days && Object.keys(user.routine.days).length > 0;
-      
-      // Calculate Stats
-      const planTime = selectedPlan ? (user.progress?.planStudySeconds?.[selectedPlan.id] || 0) : 0;
-      const totalTime = user.progress?.totalStudySeconds || 0;
-      
-      if (!selectedPlan || !hasRoutine) {
-          return (
-              <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-                  <div className="w-20 h-20 rounded-full bg-insanus-red/10 flex items-center justify-center mb-6 animate-pulse">
-                      <Icon.Book className="w-10 h-10 text-insanus-red" />
-                  </div>
-                  <h2 className="text-3xl font-black text-white mb-2">SETUP NECESSÁRIO</h2>
-                  <p className="text-gray-500 max-w-md mb-8">
-                      {!selectedPlan ? "Selecione um plano de estudos." : "Configure seus dias e horários de estudo."}
-                  </p>
-                  <button onClick={() => setView('config')} className="bg-white text-black hover:bg-insanus-red hover:text-white px-8 py-3 rounded-lg font-bold transition-all shadow-neon">
-                      IR PARA SETUP
-                  </button>
-              </div>
-          );
-      }
-      
-      if (currentPlanConfig?.isPaused) {
-          return (
-              <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-                   <div className="w-20 h-20 rounded-full bg-gray-800 flex items-center justify-center mb-6">
-                      <Icon.Pause className="w-10 h-10 text-gray-500" />
-                  </div>
-                  <h2 className="text-3xl font-black text-white mb-2">PLANO PAUSADO</h2>
-                  <p className="text-gray-500 max-w-md mb-8">
-                      Você pausou este plano. O calendário não gerará novas metas até você retomar.
-                  </p>
-                  <button onClick={handleTogglePause} className="bg-gray-700 text-white hover:bg-gray-600 px-8 py-3 rounded-lg font-bold transition-all shadow-lg">
-                      RETOMAR ESTUDOS
-                  </button>
-              </div>
-          )
-      }
-
-      // Collect Late Items
-      // Scan the entire schedule object
-      const lateItems: ScheduledItem[] = [];
-      Object.entries(schedule).forEach(([date, items]) => {
-          if (date < today) {
-              (items as ScheduledItem[]).forEach(i => {
-                  if (!i.completed) lateItems.push({ ...i, isLate: true });
-              });
-          }
-      });
-      
-      // Group Today's Items
-      const groupedItems: Record<string, ScheduledItem[]> = {};
-      todaysItems.forEach(item => {
-          if (!groupedItems[item.goalId]) groupedItems[item.goalId] = [];
-          groupedItems[item.goalId].push(item);
-      });
-      
-      // Group Late Items
-      const groupedLateItems: Record<string, ScheduledItem[]> = {};
-      lateItems.forEach(item => {
-          if (!groupedLateItems[item.goalId]) groupedLateItems[item.goalId] = [];
-          groupedLateItems[item.goalId].push(item);
-      });
-
-      const totalItems = todaysItems.length;
-      const completedCount = todaysItems.filter(i => i.completed).length;
-      const progress = totalItems ? (completedCount / totalItems) * 100 : 0;
-
-      return (
-          <div className="h-full flex flex-col relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-insanus-red/5 rounded-full blur-[100px] pointer-events-none"></div>
-
-              <div className="p-8 md:px-12 pb-0 shrink-0 z-10">
-                  <div className="flex flex-col lg:flex-row justify-between items-end mb-8 gap-6">
-                    <div>
-                        <div className="text-insanus-red font-mono text-sm uppercase tracking-[0.2em] mb-2 flex items-center gap-2">
-                            <span className="w-2 h-2 bg-insanus-red rounded-full animate-pulse"></span>
-                            Target do Dia
-                        </div>
-                        <h1 className="text-5xl md:text-6xl font-black text-white tracking-tighter leading-none">
-                            METAS <span className="text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-500">DIÁRIAS</span>
-                        </h1>
-                        <p className="text-gray-500 mt-2 font-mono text-xs">{new Date().toLocaleDateString('pt-BR', {weekday:'long', day:'numeric', month:'long'}).toUpperCase()}</p>
-                    </div>
-                    
-                    <div className="flex flex-col items-end gap-2">
-                         <div className="flex gap-4 mb-2">
-                             <div className="bg-black/40 border border-white/10 px-4 py-2 rounded-lg text-right">
-                                 <div className="text-[9px] text-gray-500 uppercase tracking-widest">Tempo Total</div>
-                                 <div className="font-mono font-bold text-white text-lg">{(totalTime / 3600).toFixed(1)}h</div>
-                             </div>
-                             <div className="bg-black/40 border border-white/10 px-4 py-2 rounded-lg text-right">
-                                 <div className="text-[9px] text-insanus-red uppercase tracking-widest">Neste Plano</div>
-                                 <div className="font-mono font-bold text-white text-lg">{(planTime / 3600).toFixed(1)}h</div>
-                             </div>
-                         </div>
-                    
-                        <div className="flex items-center gap-6">
-                            {activeTimer && (
-                                <div className="bg-black/50 border border-insanus-red/50 shadow-neon px-6 py-4 rounded-xl flex flex-col items-center backdrop-blur-md">
-                                    <span className="text-[10px] text-insanus-red font-bold uppercase mb-1 tracking-widest animate-pulse">Running Time</span>
-                                    <span className="text-4xl font-mono font-bold text-white tabular-nums">
-                                        {Math.floor(elapsedTime/60).toString().padStart(2,'0')}:{(elapsedTime%60).toString().padStart(2,'0')}
-                                    </span>
-                                </div>
-                            )}
-                            
-                            <div className="hidden md:block text-right">
-                                <div className="text-4xl font-black text-white">{Math.round(progress)}%</div>
-                                <div className="text-[10px] text-gray-500 uppercase tracking-widest">Execução Diária</div>
-                            </div>
-                        </div>
-                    </div>
-                  </div>
-                  <div className="bg-gray-800/50 h-1 w-full overflow-hidden">
-                      <div className="bg-insanus-red h-full shadow-[0_0_20px_rgba(255,31,31,0.8)] transition-all duration-1000 ease-out" style={{width: `${progress}%`}} />
-                  </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-8 md:px-12 space-y-4 relative z-10 pb-20 custom-scrollbar">
-                  
-                  {/* LATE ITEMS SECTION - ALWAYS VISIBLE */}
-                  <div className="mb-8 animate-fade-in">
-                      <div className="flex justify-between items-center mb-4 border-b border-red-500/20 pb-2">
-                          <h3 className="text-red-500 font-bold uppercase tracking-widest flex items-center gap-2">
-                              <Icon.Clock className="w-5 h-5" /> METAS EM ATRASO
-                          </h3>
-                          <button 
-                                onClick={Object.keys(groupedLateItems).length > 0 ? handleReplan : () => alert("Você não possui metas atrasadas para replanejar no momento.")}
-                                className={`text-xs font-bold px-4 py-2 rounded shadow-neon transition-all flex items-center gap-2 ${Object.keys(groupedLateItems).length > 0 ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gray-800 text-gray-500 opacity-50'}`}
-                           >
-                              <Icon.RefreshCw className="w-3 h-3" /> REPLANEJAR PLANO
-                          </button>
-                      </div>
-                      
-                      {Object.keys(groupedLateItems).length > 0 ? (
-                          <div className="space-y-4">
-                              {Object.values(groupedLateItems).map(group => (
-                                  // Render Late items same as normal cards but with Red Border
-                                  <div key={group[0].goalId} className="group relative border border-red-500/50 bg-red-900/10 rounded-2xl overflow-hidden">
-                                       <div className="p-4 flex items-center gap-4">
-                                            <div className="w-10 h-10 bg-red-500 text-white rounded flex items-center justify-center font-bold">!</div>
-                                            <div className="flex-1">
-                                                <div className="text-xs text-red-300 font-bold uppercase">{group[0].goalType}</div>
-                                                <div className="text-white font-bold">{group[0].originalGoal?.title || group[0].title}</div>
-                                                <div className="text-[10px] text-gray-400 mt-1">{group.length} submetas pendentes</div>
-                                            </div>
-                                       </div>
-                                  </div>
-                              ))}
-                          </div>
-                      ) : (
-                           <div className="p-6 rounded-xl border border-dashed border-gray-700 bg-black/20 text-gray-500 text-sm font-mono flex flex-col items-center justify-center gap-2">
-                               <Icon.Check className="w-6 h-6 text-green-500 mb-1" />
-                               <span>Você está rigorosamente em dia! Sem pendências anteriores.</span>
-                           </div>
-                      )}
-                  </div>
-                  
-                  {/* TODAY ITEMS */}
-                  {Object.keys(groupedItems).length === 0 ? (
-                      <div className="h-40 flex flex-col items-center justify-center text-gray-600 opacity-50 border border-dashed border-gray-700 rounded-xl">
-                          <Icon.Check className="w-12 h-12 mb-2 stroke-1" />
-                          <h3 className="text-xl font-bold uppercase tracking-widest">Tudo em dia!</h3>
-                      </div>
-                  ) : (
-                      Object.values(groupedItems).map((group) => {
-                          const parentItem = group[0]; 
-                          const isAccordionOpen = expandedItems[parentItem.goalId] || group.length === 1; 
-                          
-                          const totalDuration = group.reduce((acc, i) => acc + i.duration, 0);
-                          const allCompleted = group.every(i => i.completed);
-                          const countCompleted = group.filter(i => i.completed).length;
-
-                          return (
-                          <div key={parentItem.goalId} className={`group relative border rounded-2xl overflow-hidden transition-all duration-300 ${allCompleted ? 'bg-black/40 border-gray-800 opacity-60 grayscale' : 'glass border-white/5 hover:border-white/20 hover:bg-white/5'}`} style={{ borderColor: allCompleted ? 'transparent' : (parentItem.originalGoal?.color || 'rgba(255,255,255,0.1)') }}>
-                              
-                              <div className="absolute left-0 top-0 bottom-0 w-1 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: parentItem.originalGoal?.color ? `linear-gradient(to bottom, ${parentItem.originalGoal.color}, transparent)` : 'linear-gradient(to bottom, #FF1F1F, transparent)' }}></div>
-                              
-                              <div className="p-6 flex flex-col md:flex-row items-start md:items-center gap-6 cursor-pointer" onClick={() => setExpandedItems(prev => ({...prev, [parentItem.goalId]: !prev[parentItem.goalId]}))}>
-                                  <div className={`w-14 h-14 rounded-xl flex items-center justify-center font-bold text-2xl shrink-0 shadow-lg text-white`}
-                                       style={{ backgroundColor: parentItem.originalGoal?.color || (parentItem.goalType === 'AULA' ? '#2563EB' : parentItem.goalType === 'QUESTOES' ? '#F97316' : parentItem.goalType === 'LEI_SECA' ? '#9333EA' : '#16A34A') }}>
-                                      {parentItem.goalType === 'LEI_SECA' ? 'LS' : parentItem.goalType[0]}
-                                  </div>
-
-                                  <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 text-[10px] text-gray-400 uppercase tracking-widest mb-1 font-mono">
-                                          <span className="text-white bg-white/10 px-2 py-0.5 rounded">{parentItem.disciplineName}</span>
-                                          <span>// {parentItem.subjectName}</span>
-                                      </div>
-                                      <h3 className="font-bold text-xl text-white truncate group-hover:text-opacity-80 transition-colors" style={{ color: allCompleted ? '#666' : 'white' }}>
-                                          {parentItem.goalType === 'AULA' ? (parentItem.originalGoal?.title || parentItem.title) : parentItem.title}
-                                      </h3>
-                                      <div className="flex gap-4 text-xs mt-2 text-gray-400 font-mono">
-                                          <span className="flex items-center gap-1"><Icon.Clock className="w-3 h-3"/> {totalDuration} MIN TOTAL</span>
-                                          {group.length > 1 && <span className="text-insanus-red flex items-center gap-1 font-bold">{countCompleted}/{group.length} METAS</span>}
-                                          {parentItem.isRevision && <span className="text-insanus-red flex items-center gap-1">⚠ REVISÃO</span>}
-                                          {parentItem.isSplit && <span className="text-red-400 flex items-center gap-1 font-bold">⚠ META DIVIDIDA</span>}
-                                      </div>
-                                      {parentItem.originalGoal?.description && <div className="mt-2 text-sm text-gray-400 bg-white/5 p-2 rounded truncate">{parentItem.originalGoal.description}</div>}
-                                  </div>
-
-                                  <div className="flex items-center gap-3">
-                                      <div className={`transition-transform duration-300 ${isAccordionOpen ? 'rotate-180' : ''}`}>
-                                        <Icon.ChevronDown className="w-5 h-5 text-gray-400" />
-                                      </div>
-                                  </div>
-                              </div>
-                              
-                              {isAccordionOpen && (
-                                  <div className="bg-black/40 border-t border-white/5 animate-fade-in divide-y divide-white/5">
-                                      {group.map((item, index) => {
-                                          const executionId = item.subGoalId ? `${item.goalId}::${item.subGoalId}` : item.goalId;
-                                          const isItemActive = activeTimer === executionId;
-
-                                          return (
-                                              <div key={item.uniqueId} className={`p-4 pl-24 pr-8 flex flex-col md:flex-row gap-4 items-center justify-between transition-colors ${item.completed ? 'bg-green-900/5' : 'hover:bg-white/5'}`}>
-                                                  <div className="flex-1">
-                                                      <h4 className={`text-sm font-bold ${item.completed ? 'text-gray-500 line-through' : 'text-gray-200'}`}>
-                                                          {item.subGoalId ? (item.originalGoal?.subGoals?.find(s=>s.id===item.subGoalId)?.title || item.title) : item.title}
-                                                      </h4>
-                                                      <div className="text-[10px] text-gray-500 font-mono mt-1">{item.duration} min</div>
-                                                  </div>
-
-                                                  <div className="flex items-center gap-2">
-                                                      {(item.originalGoal?.link || (item.subGoalId && item.originalGoal?.subGoals?.find(s=>s.id===item.subGoalId)?.link)) && (
-                                                          <button 
-                                                            onClick={() => {
-                                                                const url = item.subGoalId ? item.originalGoal?.subGoals?.find(s=>s.id===item.subGoalId)?.link : item.originalGoal?.link;
-                                                                if(url) window.open(url, '_blank');
-                                                            }} 
-                                                            className="p-2 bg-white/5 hover:bg-white/10 rounded text-gray-300 hover:text-white border border-white/5 transition-colors" title="Link"
-                                                          >
-                                                              <span className="font-bold text-[10px]">LINK ↗</span>
-                                                          </button>
-                                                      )}
-                                                      
-                                                      {item.originalGoal?.pdfUrl && (
-                                                          <button onClick={() => setActivePDF(item.originalGoal!.pdfUrl!)} className="p-2 bg-white/5 hover:bg-white/10 rounded text-gray-300 hover:text-white border border-white/5 transition-colors" title="PDF">
-                                                              <Icon.FileText className="w-4 h-4" />
-                                                          </button>
-                                                      )}
-
-                                                      {!item.completed ? (
-                                                          isItemActive ? (
-                                                              <>
-                                                                  <button onClick={() => setIsPaused(!isPaused)} className="w-10 h-10 rounded bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-white border border-white/10">
-                                                                      {isPaused ? <Icon.Play className="w-4 h-4"/> : <Icon.Pause className="w-4 h-4"/>}
-                                                                  </button>
-                                                                  <button onClick={() => handleFinish(item)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded font-bold text-xs shadow-lg shadow-green-900/50">
-                                                                      CONCLUIR
-                                                                  </button>
-                                                              </>
-                                                          ) : (
-                                                              <button onClick={() => handleStart(executionId)} className="bg-white text-black hover:bg-gray-200 px-6 py-2 rounded font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg hover:shadow-neon transition-all">
-                                                                  <Icon.Play className="w-3 h-3 fill-current" /> INICIAR
-                                                              </button>
-                                                          )
-                                                      ) : (
-                                                          <div className="flex items-center gap-1 text-green-500 text-xs font-bold uppercase tracking-wider">
-                                                              <Icon.Check className="w-4 h-4" /> FEITO
-                                                          </div>
-                                                      )}
-                                                  </div>
-                                              </div>
-                                          );
-                                      })}
-                                  </div>
-                              )}
-                          </div>
-                      )})
-                  )}
-              </div>
-          </div>
-      );
-  };
-
-  const renderCalendar = () => {
-      const hasRoutine = user.routine && user.routine.days && Object.keys(user.routine.days).length > 0;
-
-      if (!selectedPlan || !hasRoutine) {
-          return (
+  const renderEditalVerticalizado = () => {
+    if (!selectedPlan || !selectedPlan.editalVerticalizado || selectedPlan.editalVerticalizado.length === 0) {
+         return (
               <div className="h-full flex flex-col items-center justify-center p-8 text-center glass m-8 rounded-2xl">
-                  <div className="w-20 h-20 rounded-full bg-insanus-red/10 flex items-center justify-center mb-6 animate-pulse">
-                      <Icon.Calendar className="w-10 h-10 text-insanus-red" />
-                  </div>
-                  <h2 className="text-3xl font-black text-white mb-2">CALENDÁRIO VAZIO</h2>
-                  <p className="text-gray-500 max-w-md mb-8">
-                      {!selectedPlan ? "Selecione um plano de estudos." : "Configure seus dias e horários de estudo."}
+                  <Icon.List className="w-16 h-16 text-gray-600 mb-6" />
+                  <h2 className="text-2xl font-black text-white mb-2">EDITAL NÃO DISPONÍVEL</h2>
+                  <p className="text-gray-500 max-w-md">
+                      Este plano ainda não possui um Edital Verticalizado configurado.
                   </p>
-                  <button onClick={() => setView('config')} className="bg-white text-black hover:bg-insanus-red hover:text-white px-8 py-3 rounded-lg font-bold transition-all shadow-neon">
-                      CONFIGURAR AGORA
-                  </button>
               </div>
-          );
-      }
+         );
+    }
 
-      if (currentPlanConfig?.isPaused) {
+    // --- Helper to find actual Goal object ---
+    const getGoal = (goalId: string | undefined): Goal | undefined => {
+        if (!goalId) return undefined;
+        for (const disc of selectedPlan.disciplines) {
+            for (const sub of disc.subjects) {
+                const found = sub.goals.find(g => g.id === goalId);
+                if (found) return found;
+            }
+        }
+        return undefined;
+    };
+
+    // --- Helper to check completion ---
+    const isCompleted = (goalId: string | undefined): boolean => {
+        if (!goalId) return false;
+        // Check standard completion
+        if (user.progress?.completedGoalIds.includes(goalId)) return true;
+        // Check subgoals completion (if AULA)
+        const goal = getGoal(goalId);
+        if (goal && goal.type === 'AULA' && goal.subGoals) {
+             const allSubDone = goal.subGoals.every(sub => user.progress?.completedGoalIds.includes(`${goalId}::${sub.id}`));
+             return allSubDone;
+        }
+        return false;
+    };
+
+    // --- Helper to render Cell ---
+    const renderCell = (goalId: string | undefined, typeLabel: string) => {
+        const goal = getGoal(goalId);
+        const done = isCompleted(goalId);
+        
+        if (!goalId) return <div className="w-full h-full flex items-center justify-center text-gray-800 text-lg select-none">•</div>;
+
         return (
-            <div className="h-full flex flex-col items-center justify-center p-8 text-center glass m-8 rounded-2xl">
-                <Icon.Pause className="w-16 h-16 text-yellow-600 mb-6" />
-                <h2 className="text-3xl font-black text-white mb-2">PLANO PAUSADO</h2>
-                <button onClick={handleTogglePause} className="bg-yellow-600 text-white px-8 py-3 rounded-lg font-bold transition-all shadow-lg mt-4">
-                    RETOMAR
+            <div className="flex items-center justify-center w-full h-full">
+                <button 
+                    onClick={() => {
+                        // Open Link or PDF even if done
+                        if (goal?.pdfUrl) handleOpenSecurePdf(goal.pdfUrl);
+                        else if (goal?.link) window.open(goal.link, '_blank');
+                    }}
+                    className={`w-8 h-8 rounded flex items-center justify-center transition-all ${done ? 'bg-green-500 text-black shadow-neon' : 'bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-white'}`}
+                    title={goal ? `${goal.title} (${done ? 'Concluído' : 'Pendente'})` : 'Pendente'}
+                >
+                    {done ? <Icon.Check className="w-5 h-5" /> : (
+                        typeLabel === 'AULA' ? <Icon.Play className="w-4 h-4" /> :
+                        typeLabel === 'PDF' ? <Icon.FileText className="w-4 h-4" /> :
+                        typeLabel === 'QST' ? <Icon.Code className="w-4 h-4" /> :
+                        <Icon.Book className="w-4 h-4" />
+                    )}
                 </button>
+            </div>
+        );
+    };
+
+    // --- Helper for Revisions Cell ---
+    const renderRevisionsCell = (topicLinks: any) => {
+        // Collect relevant parent goals for auto-revision checking
+        const parents = [topicLinks.questoes, topicLinks.resumo, topicLinks.revisao].filter(Boolean);
+        
+        // We will simulate 4 Revision slots
+        const slots = [0, 1, 2, 3]; // Indices
+
+        return (
+            <div className="flex items-center justify-center gap-1">
+                {slots.map(idx => {
+                    // Check if ANY of the linked parent goals has this revision index completed
+                    let isRevDone = false;
+                    
+                    parents.forEach(pid => {
+                        // 1. Explicit Revision Goal Linked?
+                        if (topicLinks.revisao === pid && isCompleted(pid)) {
+                            // If explicit revision linked, maybe we treat it as Rev 1? 
+                            // Simplification: Explicit linked revision counts as Rev 1.
+                            if (idx === 0) isRevDone = true;
+                        }
+
+                        // 2. Auto-Revision Check
+                        // Check if completedRevisionIds contains "pid_rev_idx"
+                        const revId = `${pid}_rev_${idx}`;
+                        if (user.progress?.completedRevisionIds?.includes(revId)) isRevDone = true;
+                    });
+
+                    return (
+                        <div key={idx} className={`w-3 h-3 rounded-full border border-white/10 ${isRevDone ? 'bg-insanus-red shadow-neon' : 'bg-black/40'}`} title={`Revisão ${idx+1}`}></div>
+                    )
+                })}
             </div>
         )
-      }
+    };
 
-      const daysInMonth = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0).getDate();
-      const startDay = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1).getDay(); // 0 = Sunday
-      
-      const gridCells: (Date | null)[] = [];
-      
-      if (calendarMode === 'month') {
-          for(let i=0; i<startDay; i++) gridCells.push(null);
-          for(let i=1; i<=daysInMonth; i++) {
-              const d = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), i);
-              gridCells.push(d);
-          }
-      } else {
-          const day = calendarDate.getDay();
-          const startOfWeek = new Date(calendarDate);
-          startOfWeek.setDate(calendarDate.getDate() - day);
-          for(let i=0; i<7; i++) {
-              const d = new Date(startOfWeek);
-              d.setDate(startOfWeek.getDate() + i);
-              gridCells.push(d);
-          }
-      }
+    // --- Calculate Overall Progress ---
+    let totalSlots = 0;
+    let completedSlots = 0;
+    
+    selectedPlan.editalVerticalizado.forEach(disc => {
+        disc.topics.forEach(topic => {
+            // Check main slots
+            const slots = [topic.links.aula, topic.links.material, topic.links.questoes, topic.links.leiSeca, topic.links.resumo];
+            slots.forEach(s => {
+                if (s) {
+                    totalSlots++;
+                    if (isCompleted(s)) completedSlots++;
+                }
+            });
+            // Revisions (count as 4 slots if parent has revisions)
+            const parents = [topic.links.questoes, topic.links.resumo, topic.links.revisao].filter(Boolean);
+            if (parents.length > 0) {
+                 totalSlots += 4;
+                 for(let i=0; i<4; i++) {
+                     let done = false;
+                     parents.forEach(pid => {
+                         if (user.progress?.completedRevisionIds?.includes(`${pid}_rev_${i}`)) done = true;
+                         // Hack for explicit revision counting as Rev 1
+                         if (i === 0 && topic.links.revisao && isCompleted(topic.links.revisao)) done = true;
+                     });
+                     if(done) completedSlots++;
+                 }
+            }
+        });
+    });
 
-      const prev = () => {
-          const newDate = new Date(calendarDate);
-          if (calendarMode === 'month') newDate.setMonth(newDate.getMonth() - 1);
-          else newDate.setDate(newDate.getDate() - 7);
-          setCalendarDate(newDate);
-      };
+    const percent = totalSlots > 0 ? Math.round((completedSlots / totalSlots) * 100) : 0;
 
-      const next = () => {
-          const newDate = new Date(calendarDate);
-          if (calendarMode === 'month') newDate.setMonth(newDate.getMonth() + 1);
-          else newDate.setDate(newDate.getDate() + 7);
-          setCalendarDate(newDate);
-      };
-
-      return (
-          <div className="h-full flex flex-col p-8">
-              <CalendarHeader 
-                  currentDate={calendarDate} 
-                  mode={calendarMode} 
-                  onModeChange={setCalendarMode}
-                  onPrev={prev}
-                  onNext={next}
-              />
-              
-              <div className="flex-1 glass rounded-2xl p-6 overflow-hidden flex flex-col">
-                  {/* Days Header */}
-                  <div className={`grid grid-cols-7 gap-4 mb-4 text-center`}>
-                      {WEEKDAYS.map(w => (
-                          <div key={w.key} className="text-xs font-bold text-gray-500 uppercase tracking-widest">{w.label.slice(0,3)}</div>
-                      ))}
-                  </div>
-                  
-                  {/* Grid */}
-                  <div className={`grid grid-cols-7 gap-4 flex-1 ${calendarMode === 'month' ? 'grid-rows-5' : 'grid-rows-1'}`}>
-                      {gridCells.map((date, idx) => {
-                          if (!date) return <div key={idx} className="bg-transparent"></div>;
-                          
-                          const dateStr = date.toISOString().split('T')[0];
-                          const items: ScheduledItem[] = schedule[dateStr] || [];
-                          const isToday = dateStr === new Date().toISOString().split('T')[0];
-                          const isPast = dateStr < new Date().toISOString().split('T')[0];
-                          
-                          // GROUP ITEMS FOR CALENDAR DISPLAY
-                          const uniqueGoalItems: ScheduledItem[] = [];
-                          const processedGoals = new Set<string>();
-
-                          // Explicit typing to fix potential 'forEach on unknown' if schedule type inference is weak
-                          (items as ScheduledItem[]).forEach(item => {
-                              if (processedGoals.has(item.goalId)) return;
-                              processedGoals.add(item.goalId);
-                              uniqueGoalItems.push(item);
-                          });
-
-                          return (
-                              <div key={idx} className={`rounded-xl border p-2 flex flex-col gap-1 transition-all ${isToday ? 'bg-insanus-red/10 border-insanus-red' : 'bg-white/5 border-white/5 hover:border-white/20'}`}>
-                                  <div className={`text-xs font-mono font-bold flex justify-between ${isToday ? 'text-insanus-red' : 'text-gray-400'}`}>
-                                      {date.getDate()}
-                                      {isPast && items.some(i => !i.completed) && <span className="text-red-500 text-[10px] animate-pulse">!</span>}
-                                  </div>
-                                  <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar">
-                                      {uniqueGoalItems.map(i => {
-                                          const count = items.filter(x => x.goalId === i.goalId).length;
-                                          const allDone = items.filter(x => x.goalId === i.goalId).every(x => x.completed);
-
-                                          return (
-                                          <div key={i.uniqueId} className={`text-[9px] p-1 rounded truncate flex items-center gap-1 ${allDone ? 'bg-green-900/50 text-green-400' : 'bg-gray-800 text-gray-300'}`} style={{ borderLeft: `2px solid ${i.originalGoal?.color || '#555'}` }}>
-                                              {allDone && <Icon.Check className="w-2 h-2" />}
-                                              {/* Show Parent Title always in Calendar */}
-                                              {i.originalGoal?.title || i.title}
-                                              {count > 1 && <span className="text-[8px] bg-white/10 px-1 rounded ml-auto">{count}</span>}
-                                          </div>
-                                      )})}
-                                  </div>
-                              </div>
-                          );
-                      })}
-                  </div>
-              </div>
-          </div>
-      );
-  };
-
-  return (
-    <div className="flex w-full h-full bg-insanus-black text-gray-200 relative">
-        {/* ADMIN PREVIEW MODE BANNER */}
-        {onReturnToAdmin && (
-            <div className="absolute top-0 left-0 right-0 h-10 bg-yellow-600 text-black font-bold uppercase tracking-widest text-xs flex items-center justify-center z-50 shadow-xl">
-                <span>Modo de Visualização de Aluno</span>
-                <button onClick={onReturnToAdmin} className="ml-4 bg-black text-white px-3 py-1 rounded hover:bg-gray-800 transition">
-                    Voltar para Admin
-                </button>
-            </div>
-        )}
-
-        {/* Sidebar Navigation */}
-        <div className={`hidden lg:flex w-24 border-r border-white/5 flex-col items-center py-8 shrink-0 bg-black/50 backdrop-blur-sm z-20 ${onReturnToAdmin ? 'mt-10' : ''}`}>
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-insanus-red to-red-900 flex items-center justify-center font-bold text-white text-xl shadow-neon mb-12">
-                {user.name.charAt(0)}
-            </div>
-            
-            <nav className="flex-1 space-y-6 w-full px-4">
-                {[
-                    {id: 'daily', icon: Icon.Check, label: 'HOJE'},
-                    {id: 'calendar', icon: Icon.Calendar, label: 'AGENDA'},
-                    {id: 'config', icon: Icon.Menu, label: 'SETUP'},
-                ].map(item => (
-                    <button key={item.id} onClick={() => setView(item.id as any)}
-                        className={`w-full aspect-square rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 group relative ${view === item.id ? 'bg-white/10 text-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'text-gray-500 hover:bg-white/5 hover:text-white'}`}>
-                        <item.icon className={`w-6 h-6 ${view === item.id ? 'text-insanus-red' : ''}`} />
-                        <span className="text-[9px] font-bold tracking-widest">{item.label}</span>
-                        {view === item.id && <div className="absolute left-0 h-8 w-1 bg-insanus-red rounded-r-full"></div>}
-                    </button>
-                ))}
-            </nav>
-            
-            <div className="text-[10px] font-mono text-gray-600 rotate-180 writing-mode-vertical">V2.1.0</div>
-        </div>
-
-        {/* Content */}
-        <div className={`flex-1 overflow-hidden relative ${onReturnToAdmin ? 'mt-10' : ''}`}>
-            {/* Mobile Header (Visible only on small screens) */}
-            <div className="lg:hidden h-16 border-b border-white/10 flex items-center justify-between px-6 bg-insanus-black z-20">
-                <div className="font-bold text-white">INSANUS</div>
-                <div className="flex gap-4">
-                     <button onClick={() => setView('daily')} className={view==='daily'?'text-insanus-red':''}>HOJE</button>
-                     <button onClick={() => setView('config')} className={view==='config'?'text-insanus-red':''}>SETUP</button>
-                     <button onClick={() => setView('calendar')} className={view==='calendar'?'text-insanus-red':''}>CAL</button>
+    return (
+        <div className="flex flex-col h-full bg-black/90 text-white overflow-hidden p-8">
+            {/* Header */}
+            <div className="mb-8 flex flex-col md:flex-row justify-between items-end gap-6 border-b border-white/10 pb-6">
+                <div>
+                    <h2 className="text-3xl font-black text-white uppercase tracking-tighter flex items-center gap-3">
+                         <Icon.List className="w-8 h-8 text-insanus-red" />
+                         EDITAL <span className="text-gray-500">VERTICALIZADO</span>
+                    </h2>
+                    <p className="text-gray-500 font-mono text-sm mt-1">Visão estratégica de cobertura do edital.</p>
+                </div>
+                
+                <div className="w-full md:w-1/3">
+                    <div className="flex justify-between text-xs font-bold uppercase mb-2">
+                        <span>Progresso Global</span>
+                        <span className="text-insanus-red">{percent}%</span>
+                    </div>
+                    <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-insanus-red to-red-600 transition-all duration-1000 ease-out shadow-neon" style={{width: `${percent}%`}}></div>
+                    </div>
                 </div>
             </div>
 
-            {view === 'daily' && renderDaily()}
-            {view === 'config' && renderConfig()}
-            {view === 'calendar' && renderCalendar()}
-            
-            {activePDF && <PDFViewer url={activePDF} user={user} onClose={() => setActivePDF(null)} />}
+            {/* Content Table */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar pb-20">
+                <div className="space-y-8">
+                    {selectedPlan.editalVerticalizado.map(disc => (
+                        <div key={disc.id} className="glass border border-white/5 rounded-xl overflow-hidden">
+                            <div className="bg-white/5 p-4 font-black uppercase tracking-wider text-sm flex items-center gap-2">
+                                <div className="w-1.5 h-6 bg-insanus-red rounded"></div>
+                                {disc.name}
+                            </div>
+                            
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr className="border-b border-white/5 bg-black/40 text-[10px] font-bold text-gray-500 uppercase tracking-widest text-center">
+                                            <th className="p-3 text-left w-1/3">Tópico</th>
+                                            <th className="p-3 w-12">AULA</th>
+                                            <th className="p-3 w-12">PDF</th>
+                                            <th className="p-3 w-12">QUEST</th>
+                                            <th className="p-3 w-12">LEI</th>
+                                            <th className="p-3 w-12">RES</th>
+                                            <th className="p-3 w-24">REVISÕES</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                        {disc.topics.map(topic => {
+                                            // Check Row Completion
+                                            // A topic is done if all linked slots are done + 2 revision cycles (indices 0 and 1)
+                                            // This is a simplified logic for "Check Row" visual
+                                            let isRowDone = true;
+                                            if (topic.links.aula && !isCompleted(topic.links.aula)) isRowDone = false;
+                                            if (topic.links.material && !isCompleted(topic.links.material)) isRowDone = false;
+                                            if (topic.links.questoes && !isCompleted(topic.links.questoes)) isRowDone = false;
+                                            
+                                            // Revisions Check (Rev 1 & 2 mandatory for row completion based on prompt)
+                                            const parents = [topic.links.questoes, topic.links.resumo].filter(Boolean);
+                                            if (parents.length > 0) {
+                                                let r1 = false, r2 = false;
+                                                parents.forEach(pid => {
+                                                    if(user.progress?.completedRevisionIds?.includes(`${pid}_rev_0`)) r1 = true;
+                                                    if(user.progress?.completedRevisionIds?.includes(`${pid}_rev_1`)) r2 = true;
+                                                });
+                                                if(!r1 || !r2) isRowDone = false;
+                                            }
+
+                                            return (
+                                                <tr key={topic.id} className="hover:bg-white/5 transition-colors group">
+                                                    <td className="p-4 text-sm font-bold text-gray-300 group-hover:text-white flex flex-col justify-center">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${isRowDone ? 'bg-green-500 border-green-500 text-black' : 'border-gray-600'}`}>
+                                                                {isRowDone && <Icon.Check className="w-3 h-3" />}
+                                                            </div>
+                                                            {topic.name}
+                                                        </div>
+                                                        {/* CONTEST BADGES */}
+                                                        {topic.relatedContests && topic.relatedContests.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1 mt-1 pl-7">
+                                                                {topic.relatedContests.map(c => (
+                                                                    <span key={c} className="text-[9px] bg-insanus-red/10 text-insanus-red px-1.5 py-0.5 rounded border border-insanus-red/30 font-bold uppercase tracking-wider">
+                                                                        {c}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-2">{renderCell(topic.links.aula, 'AULA')}</td>
+                                                    <td className="p-2">{renderCell(topic.links.material, 'PDF')}</td>
+                                                    <td className="p-2">{renderCell(topic.links.questoes, 'QST')}</td>
+                                                    <td className="p-2">{renderCell(topic.links.leiSeca, 'LEI')}</td>
+                                                    <td className="p-2">{renderCell(topic.links.resumo, 'RES')}</td>
+                                                    <td className="p-2 text-center">{renderRevisionsCell(topic.links)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
         </div>
-    </div>
-  );
-};
+    );
+  }

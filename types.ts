@@ -24,6 +24,9 @@ export interface User {
   progress: UserProgress; 
   // Store computed schedule to avoid re-calc every render
   schedule?: Record<string, ScheduledItem[]>; // DateStr -> Items
+  
+  // Auth
+  tempPassword?: string;
 }
 
 export interface UserProgress {
@@ -115,15 +118,48 @@ export interface Cycle {
   order: number;
 }
 
+// --- EDITAL VERTICALIZADO TYPES ---
+
+export interface EditalTopic {
+    id: string;
+    name: string;
+    // Maps specific slots to Goal IDs existing in the Plan
+    links: {
+        aula?: string;
+        material?: string;
+        questoes?: string;
+        leiSeca?: string;
+        resumo?: string;
+        // Explicit revisions can be linked, or inferred from parent goals
+        revisao?: string; 
+    };
+    relatedContests?: string[]; // Array of contest names (e.g. ['PF', 'PRF'])
+    order: number;
+}
+
+export interface EditalDiscipline {
+    id: string;
+    name: string;
+    topics: EditalTopic[];
+    order: number;
+}
+
+export type PlanCategory = 'CARREIRAS_POLICIAIS' | 'CARREIRAS_TRIBUNAIS' | 'CARREIRAS_ADMINISTRATIVAS' | 'CARREIRAS_JURIDICAS' | 'ENEM' | 'OUTROS';
+
 export interface StudyPlan {
   id: string;
   name: string;
+  category: PlanCategory;
   coverImage: string;
   folders: Folder[];
   disciplines: Discipline[];
   cycles: Cycle[];
   cycleSystem: 'continuo' | 'rotativo';
   brandingLogo?: string;
+  
+  // New Feature
+  editalVerticalizado?: EditalDiscipline[];
+  linkedContests?: string[]; // Master list of contests for this plan (e.g. ['PF', 'PRF', 'PC-DF'])
 }
 
 export interface ScheduledItem {

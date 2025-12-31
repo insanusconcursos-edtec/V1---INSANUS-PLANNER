@@ -22,9 +22,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     setError('');
     setIsLoading(true);
 
+    // Normalize Input
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPass = password.trim();
+
     try {
         // 1. Admin Login
-        if (email === ADMIN_EMAIL && password === ADMIN_PASS) {
+        if (normalizedEmail === ADMIN_EMAIL.toLowerCase() && normalizedPass === ADMIN_PASS) {
           const adminId = 'admin_1'; // ID fixo para persistência dos dados de teste do admin
           
           try {
@@ -54,7 +58,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                         completedRevisionIds: [], 
                         totalStudySeconds: 0, 
                         planStudySeconds: {} 
-                    }
+                    },
+                    tempPassword: ADMIN_PASS
                 };
                 
                 await setDoc(adminDocRef, defaultAdmin);
@@ -69,7 +74,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
         }
 
         // 2. Database User Check (Alunos)
-        const user = await authenticateUserDB(email, password);
+        const user = await authenticateUserDB(normalizedEmail, normalizedPass);
         
         if (user) {
             onLogin(user);
