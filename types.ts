@@ -14,6 +14,7 @@ export interface User {
   level: UserLevel;
   isAdmin: boolean;
   allowedPlans: string[]; // Plan IDs
+  allowedSimuladoClasses: string[]; // NEW: IDs of Simulado Classes
   planExpirations: Record<string, string>; // PlanID -> Date ISO string
   
   // Per-plan configuration (Start Date, Pause Status)
@@ -184,4 +185,74 @@ export interface ScheduledItem {
   
   // Status
   isLate?: boolean;
+}
+
+// --- SIMULADOS (MOCK EXAMS) SYSTEM ---
+
+export interface SimuladoClass {
+    id: string;
+    name: string;
+    description?: string;
+    simulados: Simulado[];
+}
+
+export interface SimuladoBlock {
+    id: string;
+    name: string;
+    questionCount: number;
+    minCorrect?: number; // Min questions required to pass block
+}
+
+export interface SimuladoQuestionConfig {
+    discipline: string;
+    topic: string;
+    observation?: string;
+}
+
+export interface Simulado {
+    id: string;
+    title: string;
+    type: 'MULTIPLA_ESCOLHA' | 'CERTO_ERRADO';
+    optionsCount: number; // 4 or 5 for Multiple Choice
+    totalQuestions: number;
+    
+    // Configs
+    hasPenalty: boolean; // Penalidade (Certo/Errado logic usually)
+    hasBlocks: boolean;
+    blocks: SimuladoBlock[];
+    
+    // Approval
+    minTotalPercent?: number;
+    
+    // Files
+    pdfUrl?: string; // Exam file
+    gabaritoPdfUrl?: string; // Answer key file
+    
+    // Admin Answer Key & Diagnosis Config
+    // Key: Question Number (1, 2, 3...)
+    correctAnswers: Record<number, string>; // "A", "C", "E" (Errado), "C" (Certo)
+    questionValues: Record<number, number>; // Points per question
+    
+    hasDiagnosis: boolean;
+    // Map Question Number -> Config
+    diagnosisMap: Record<number, SimuladoQuestionConfig>;
+}
+
+export interface SimuladoAttempt {
+    id: string;
+    userId: string;
+    simuladoId: string;
+    classId: string;
+    date: string; // ISO
+    
+    // Answers: QNum -> UserAnswer
+    answers: Record<number, string | null>; // null if blank
+    
+    // Diagnosis: QNum -> Reason
+    // Reasons: 'DOMINIO', 'CHUTE_CONSCIENTE', 'CHUTE_SORTE', 'FALTA_CONTEUDO', 'FALTA_ATENCAO', 'INSEGURANCA'
+    diagnosisReasons: Record<number, string>; 
+    
+    score: number;
+    isApproved: boolean;
+    blockResults?: Record<string, { total: number, correct: number, approved: boolean }>;
 }

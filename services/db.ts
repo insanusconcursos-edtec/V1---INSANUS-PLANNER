@@ -1,6 +1,7 @@
+
 import { db } from '../firebase';
 import { collection, doc, setDoc, getDocs, getDoc, query, where, deleteDoc, writeBatch } from 'firebase/firestore';
-import { User, StudyPlan } from '../types';
+import { User, StudyPlan, SimuladoClass, SimuladoAttempt } from '../types';
 
 // Helper to remove undefined fields because Firestore doesn't support them.
 const cleanData = (obj: any): any => {
@@ -18,6 +19,7 @@ export const saveUserToDB = async (user: User) => {
     const userData = cleanData(user);
     // Ensure critical arrays exist to prevent 'includes/indexOf' errors later
     if (!userData.allowedPlans) userData.allowedPlans = [];
+    if (!userData.allowedSimuladoClasses) userData.allowedSimuladoClasses = [];
     if (!userData.progress) {
         userData.progress = { 
             completedGoalIds: [], 
@@ -100,12 +102,68 @@ export const deletePlanFromDB = async (planId: string) => {
     }
 };
 
+// --- SIMULADOS (MOCK EXAMS) COLLECTIONS ---
+
+export const saveSimuladoClassToDB = async (simClass: SimuladoClass) => {
+    if(!simClass || !simClass.id) return;
+    try {
+        await setDoc(doc(db, "simulados_classes", simClass.id), cleanData(simClass));
+    } catch (e) {
+        console.error("Error saving Simulado Class:", e);
+        throw e;
+    }
+}
+
+export const fetchSimuladoClassesFromDB = async (): Promise<SimuladoClass[]> => {
+    try {
+        const q = await getDocs(collection(db, "simulados_classes"));
+        const list: SimuladoClass[] = [];
+        q.forEach(d => list.push(d.data() as SimuladoClass));
+        return list;
+    } catch (e) {
+        console.error("Error fetching Simulado Classes:", e);
+        return [];
+    }
+}
+
+export const deleteSimuladoClassFromDB = async (id: string) => {
+    try {
+        await deleteDoc(doc(db, "simulados_classes", id));
+    } catch (e) {
+        console.error("Error deleting Simulado Class:", e);
+        throw e;
+    }
+}
+
+export const saveSimuladoAttemptToDB = async (attempt: SimuladoAttempt) => {
+    if(!attempt || !attempt.id) return;
+    try {
+        await setDoc(doc(db, "simulados_attempts", attempt.id), cleanData(attempt));
+    } catch (e) {
+        console.error("Error saving Attempt:", e);
+        throw e;
+    }
+}
+
+export const fetchSimuladoAttemptsFromDB = async (): Promise<SimuladoAttempt[]> => {
+    try {
+        const q = await getDocs(collection(db, "simulados_attempts"));
+        const list: SimuladoAttempt[] = [];
+        q.forEach(d => list.push(d.data() as SimuladoAttempt));
+        return list;
+    } catch (e) {
+        console.error("Error fetching Attempts:", e);
+        return [];
+    }
+}
+
+
 // --- DANGER ZONE: RESET FULL DATABASE ---
 export const resetFullDatabase = async () => {
     try {
         console.log(">>> INICIANDO RESET TOTAL DO BANCO DE DADOS...");
         
-        const collectionsToCheck = ["plans", "users"];
+        const collectionsToCheck = ["plans", "users", "simulados_classes", "simulados_attempts"];
         let totalDeleted = 0;
 
         for (const colName of collectionsToCheck) {

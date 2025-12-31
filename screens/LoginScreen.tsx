@@ -50,6 +50,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                     level: 'avancado',
                     isAdmin: true,
                     allowedPlans: [], // Admin vê todos via lógica do Dashboard
+                    allowedSimuladoClasses: [], // Inicialmente nenhuma turma, mas admin vê tudo
                     planExpirations: {},
                     planConfigs: {},
                     routine: { days: {} }, // Começa vazio para obrigar o teste de setup

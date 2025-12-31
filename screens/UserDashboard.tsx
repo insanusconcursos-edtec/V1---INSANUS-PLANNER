@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { User, StudyPlan, ScheduledItem, Routine, Goal, SubGoal, UserProgress, GoalType, PlanConfig, Discipline, Subject, UserLevel } from '../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { User, StudyPlan, Routine, Goal, SubGoal, UserProgress, GoalType, PlanConfig, Discipline, Subject, UserLevel, SimuladoClass, Simulado, SimuladoAttempt, ScheduledItem } from '../types';
 import { Icon } from '../components/Icons';
 import { WEEKDAYS, calculateGoalDuration, uuid } from '../constants';
-import { fetchPlansFromDB, saveUserToDB } from '../services/db';
-import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
+import { fetchPlansFromDB, saveUserToDB, fetchSimuladoClassesFromDB, fetchSimuladoAttemptsFromDB, saveSimuladoAttemptToDB } from '../services/db';
 
 interface Props {
   user: User;
@@ -11,904 +10,1170 @@ interface Props {
   onReturnToAdmin?: () => void;
 }
 
-// --- NEW Logic for Granular Scheduling ---
-const generateSchedule = (plan: StudyPlan, routine: Routine, user: User): Record<string, ScheduledItem[]> => {
-    const schedule: Record<string, ScheduledItem[]> = {};
-    
-    // Safety checks
-    if (!plan || !routine || !routine.days) return {};
+// --- HELPER: DATE & TIME UTILS ---
+const getTodayStr = () => new Date().toISOString().split('T')[0];
 
-    // Get Plan Config (Start Date & Pause)
-    const planConfig = user.planConfigs?.[plan.id] || { startDate: new Date().toISOString(), isPaused: false };
-    
-    // If Paused, return empty schedule (nothing scheduled in future)
-    if (planConfig.isPaused) return {};
+const formatDate = (dateStr: string) => {
+    if(!dateStr) return '--/--';
+    const parts = dateStr.split('-');
+    return `${parts[2]}/${parts[1]}`; // DD/MM
+};
 
-    // 1. Create a Flattened Queue of "Schedulable Units"
-    interface SchedulableUnit {
-        id: string; // unique ID for queue
-        goal: Goal;
-        discipline: string;
-        subject: string;
-        duration: number;
-        originalDuration: number; // To track splits
-        title: string;
-        completed: boolean;
+const formatSecondsToTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m ${s}s`;
+};
+
+const formatStopwatch = (seconds: number) => {
+    const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+    const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${h}:${m}:${s}`;
+};
+
+const getDayName = (dateStr: string) => {
+    const d = new Date(dateStr + 'T12:00:00'); 
+    const dayMap = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+    return dayMap[d.getDay()];
+};
+
+const getWeekDays = (baseDateStr: string) => {
+    const date = new Date(baseDateStr + 'T12:00:00');
+    const day = date.getDay(); 
+    const diff = date.getDate() - day; 
+    const sunday = new Date(date.setDate(diff));
+    
+    const week = [];
+    for(let i=0; i<7; i++) {
+        const next = new Date(sunday);
+        next.setDate(sunday.getDate() + i);
+        week.push(next.toISOString().split('T')[0]);
     }
+    return week;
+};
 
-    const queue: SchedulableUnit[] = [];
+// --- SIMULADO RUNNER COMPONENT ---
+interface SimuladoRunnerProps {
+    user: User;
+    classId: string;
+    simulado: Simulado;
+    attempt?: SimuladoAttempt;
+    onFinish: (result: SimuladoAttempt) => void;
+    onBack: () => void;
+}
 
-    if (plan.disciplines) {
-        plan.disciplines.forEach(d => {
-            if (d.subjects) {
-                d.subjects.forEach(s => {
-                    if (s.goals) {
-                        s.goals.forEach(g => {
-                            // GROUPING LOGIC FIX:
-                            // Instead of creating one item per subgoal, we calculate the TOTAL remaining duration
-                            // of the goal based on uncompleted subgoals.
-                            
-                            let duration = 0;
-                            let isFullyCompleted = false;
+const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado, attempt, onFinish, onBack }) => {
+    const [answers, setAnswers] = useState<Record<number, string | null>>(attempt?.answers || {});
+    const [showResult, setShowResult] = useState(!!attempt);
+    const [confirmFinish, setConfirmFinish] = useState(false);
 
-                            if (g.type === 'AULA' && g.subGoals && g.subGoals.length > 0) {
-                                // Calculate duration of pending subgoals
-                                const pendingSubGoals = g.subGoals.filter(sub => 
-                                    !user.progress?.completedGoalIds?.includes(`${g.id}::${sub.id}`)
-                                );
-                                
-                                if (pendingSubGoals.length === 0 && g.subGoals.length > 0) {
-                                    isFullyCompleted = true; // All subgoals done
-                                } else {
-                                    // Sum duration of pending items
-                                    duration = pendingSubGoals.reduce((acc, sub) => acc + (sub.duration || 30), 0);
-                                }
-                            } else {
-                                // Standard Goal (PDF, Exercises, etc)
-                                duration = calculateGoalDuration(g, user.level);
-                                isFullyCompleted = user.progress?.completedGoalIds?.includes(g.id);
-                            }
+    const handleAnswer = (q: number, val: string) => {
+        if (showResult) return;
+        setAnswers(prev => ({ ...prev, [q]: val }));
+    };
 
-                            // Only schedule if not fully completed
-                            if (!isFullyCompleted && duration > 0) {
-                                queue.push({
-                                    id: g.id,
-                                    goal: g,
-                                    discipline: d.name,
-                                    subject: s.name,
-                                    duration: duration,
-                                    originalDuration: duration,
-                                    title: g.title,
-                                    completed: false
-                                });
-                            }
-                        });
-                    }
-                });
-            }
-        });
-    }
-
-    if (queue.length === 0) return {};
-
-    // 2. Schedule the Queue
-    // START DATE: Based on user's plan config (Replan sets this to Today)
-    let currentDate = new Date(planConfig.startDate); 
-    const todayStr = new Date().toISOString().split('T')[0];
-    
-    let queueIndex = 0;
-    let safetyDays = 0;
-    const MAX_DAYS = 365 * 2; 
-
-    while (queueIndex < queue.length && safetyDays < MAX_DAYS) {
-        const dateStr = currentDate.toISOString().split('T')[0];
-        const dayName = ['domingo','segunda','terca','quarta','quinta','sexta','sabado'][currentDate.getDay()];
+    const finishSimulado = () => {
+        let score = 0;
+        let correctCount = 0;
         
-        // Check if Late
-        const isLate = dateStr < todayStr;
-
-        let minutesCapacity = Number(routine.days[dayName]) || 0;
-        let minutesUsed = 0;
-
-        if (!schedule[dateStr]) schedule[dateStr] = [];
-
-        if (minutesCapacity > 0) {
-            while (queueIndex < queue.length) {
-                const item = queue[queueIndex];
-                const minutesRemaining = minutesCapacity - minutesUsed;
-
-                if (minutesRemaining <= 0) break;
-
-                // Case 1: Fits perfectly
-                if (item.duration <= minutesRemaining) {
-                    schedule[dateStr].push({
-                        uniqueId: `${dateStr}_${item.id}_${uuid()}`,
-                        date: dateStr,
-                        goalId: item.goal.id,
-                        goalType: item.goal.type,
-                        title: item.title,
-                        disciplineName: item.discipline,
-                        subjectName: item.subject,
-                        duration: item.duration,
-                        isRevision: false,
-                        completed: item.completed,
-                        originalGoal: item.goal,
-                        isSplit: false,
-                        isLate: isLate
-                    });
-                    minutesUsed += item.duration;
-                    queueIndex++;
-                }
-                // Case 2: Fits in a FULL day, but not today (move to tomorrow)
-                else if (item.duration <= minutesCapacity) {
-                    break; 
-                }
-                // Case 3: Too big for any day (Split)
-                else {
-                    const partDuration = minutesRemaining;
-                    
-                    schedule[dateStr].push({
-                        uniqueId: `${dateStr}_${item.id}_part1_${uuid()}`,
-                        date: dateStr,
-                        goalId: item.goal.id,
-                        goalType: item.goal.type,
-                        title: `${item.title} (Parte 1)`,
-                        disciplineName: item.discipline,
-                        subjectName: item.subject,
-                        duration: partDuration,
-                        isRevision: false,
-                        completed: item.completed,
-                        originalGoal: item.goal,
-                        isSplit: true,
-                        isLate: isLate
-                    });
-                    
-                    item.duration -= partDuration;
-                    item.title = item.title.includes("(Parte") ? item.title : `${item.title} (Parte 2)`;
-                    if(item.title.includes("Parte 2") && partDuration > 0) item.title = item.title.replace("Parte 2", "Parte Final");
-
-                    minutesUsed += partDuration;
-                }
+        // Calculate Score
+        for (let i = 1; i <= simulado.totalQuestions; i++) {
+            const userAns = answers[i];
+            const correctAns = simulado.correctAnswers[i];
+            const val = simulado.questionValues[i] || 1;
+            
+            if (userAns && userAns === correctAns) {
+                score += val;
+                correctCount++;
+            } else if (userAns && simulado.hasPenalty) {
+                // Penalidade simplificada: anula o valor da questão
+                score -= val;
             }
         }
+        if (score < 0) score = 0;
 
-        currentDate.setDate(currentDate.getDate() + 1);
-        safetyDays++;
+        const totalPoints = Object.values(simulado.questionValues).reduce((a,b)=>a+b, 0) || simulado.totalQuestions;
+        const percent = totalPoints > 0 ? (score / totalPoints) * 100 : 0;
+        const isApproved = simulado.minTotalPercent ? percent >= simulado.minTotalPercent : percent >= 50;
+
+        const result: SimuladoAttempt = {
+            id: attempt?.id || uuid(),
+            userId: user.id,
+            simuladoId: simulado.id,
+            classId: classId,
+            date: new Date().toISOString(),
+            answers,
+            diagnosisReasons: {}, // Implementar se necessário UI de diagnóstico
+            score,
+            isApproved
+        };
+
+        onFinish(result);
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black text-white flex flex-col animate-fade-in">
+             {/* Header */}
+             <div className="h-16 border-b border-white/10 bg-insanus-black flex items-center justify-between px-6 shrink-0">
+                <div className="flex items-center gap-4">
+                    <button onClick={onBack} className="text-gray-500 hover:text-white flex items-center gap-2">
+                        <Icon.ArrowUp className="-rotate-90 w-5 h-5" /> <span className="text-xs font-bold uppercase">Sair</span>
+                    </button>
+                    <div className="h-6 w-px bg-white/10"></div>
+                    <h2 className="font-bold uppercase text-lg">{simulado.title}</h2>
+                </div>
+                {!showResult && (
+                    <button 
+                        onClick={() => setConfirmFinish(true)}
+                        className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded font-bold text-xs uppercase shadow-neon"
+                    >
+                        Finalizar Simulado
+                    </button>
+                )}
+             </div>
+
+             {/* Confirmation Modal */}
+             {confirmFinish && (
+                 <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur flex items-center justify-center p-4">
+                     <div className="bg-black border border-white/10 p-8 rounded-xl max-w-sm w-full text-center">
+                         <h3 className="text-xl font-bold text-white mb-2">Tem certeza?</h3>
+                         <p className="text-gray-400 text-sm mb-6">Ao finalizar, você não poderá alterar suas respostas.</p>
+                         <div className="flex gap-4">
+                             <button onClick={() => setConfirmFinish(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded font-bold text-xs">VOLTAR</button>
+                             <button onClick={finishSimulado} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded font-bold text-xs">CONFIRMAR</button>
+                         </div>
+                     </div>
+                 </div>
+             )}
+
+             {/* Content */}
+             <div className="flex-1 flex overflow-hidden">
+                {/* PDF Area (if exists) */}
+                {simulado.pdfUrl && (
+                    <div className="w-1/2 border-r border-white/10 bg-gray-900 flex flex-col">
+                        <div className="flex-1 flex items-center justify-center text-gray-500">
+                             {/* In a real app, render PDF here. For now, a placeholder or iframe if link is direct */}
+                             <iframe src={simulado.pdfUrl} className="w-full h-full" title="PDF Viewer"></iframe>
+                        </div>
+                    </div>
+                )}
+
+                {/* Question Grid */}
+                <div className={`${simulado.pdfUrl ? 'w-1/2' : 'w-full max-w-4xl mx-auto'} flex flex-col bg-black/50`}>
+                    <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                         {attempt && (
+                             <div className={`p-4 rounded-xl border mb-8 flex justify-between items-center ${attempt.isApproved ? 'bg-green-900/20 border-green-600' : 'bg-red-900/20 border-red-600'}`}>
+                                 <div>
+                                     <h3 className={`text-xl font-black ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'}</h3>
+                                     <p className="text-xs text-gray-400">Pontuação Final: {attempt.score}</p>
+                                 </div>
+                                 <button onClick={onBack} className="text-white text-xs underline">Voltar ao Painel</button>
+                             </div>
+                         )}
+
+                         <div className="space-y-6">
+                            {Array.from({ length: simulado.totalQuestions }).map((_, i) => {
+                                const qNum = i + 1;
+                                const userAns = answers[qNum];
+                                const correctAns = showResult ? simulado.correctAnswers[qNum] : null;
+                                const isCorrect = showResult && userAns === correctAns;
+                                
+                                return (
+                                    <div key={qNum} className="glass p-4 rounded-xl border border-white/5">
+                                        <div className="flex justify-between mb-4">
+                                            <span className="font-bold text-insanus-red">QUESTÃO {qNum}</span>
+                                            {showResult && (
+                                                <span className={`text-xs font-bold ${isCorrect ? 'text-green-500' : 'text-red-500'}`}>
+                                                    {isCorrect ? 'ACERTOU' : userAns ? `ERROU (Gab: ${correctAns})` : `EM BRANCO (Gab: ${correctAns})`}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex gap-2 flex-wrap">
+                                            {simulado.type === 'MULTIPLA_ESCOLHA' ? (
+                                                ['A','B','C','D','E'].slice(0, simulado.optionsCount).map(opt => (
+                                                    <button 
+                                                        key={opt}
+                                                        onClick={() => handleAnswer(qNum, opt)}
+                                                        disabled={showResult}
+                                                        className={`w-10 h-10 rounded font-bold transition-all ${
+                                                            userAns === opt 
+                                                                ? 'bg-white text-black shadow-[0_0_10px_white]' 
+                                                                : 'bg-black border border-white/20 text-gray-400 hover:border-white'
+                                                        } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
+                                                    >
+                                                        {opt}
+                                                    </button>
+                                                ))
+                                            ) : (
+                                                ['C','E'].map(opt => (
+                                                    <button 
+                                                        key={opt}
+                                                        onClick={() => handleAnswer(qNum, opt)}
+                                                        disabled={showResult}
+                                                        className={`flex-1 py-2 rounded font-bold transition-all ${
+                                                            userAns === opt 
+                                                                ? 'bg-white text-black' 
+                                                                : 'bg-black border border-white/20 text-gray-400 hover:border-white'
+                                                        } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
+                                                    >
+                                                        {opt === 'C' ? 'CERTO' : 'ERRADO'}
+                                                    </button>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                         </div>
+                    </div>
+                </div>
+             </div>
+        </div>
+    );
+};
+
+// --- COMPONENT: SETUP & MANAGEMENT ---
+const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, currentPlan: StudyPlan | null, onSave: (r: Routine, l: UserLevel) => void, onPlanAction: (action: 'pause' | 'reschedule') => void }) => {
+    const [days, setDays] = useState(user.routine?.days || {});
+    const [level, setLevel] = useState<UserLevel>(user.level || 'iniciante');
+
+    const handleDayChange = (key: string, val: string) => {
+        setDays(prev => ({ ...prev, [key]: parseInt(val) || 0 }));
+    };
+
+    const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
+
+    return (
+        <div className="max-w-4xl mx-auto space-y-8 animate-fade-in mt-4">
+            
+            {/* PLAN MANAGEMENT CARD */}
+            {currentPlan && (
+                <div className="glass p-6 rounded-2xl border border-white/10 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-insanus-red"></div>
+                    <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Icon.Edit className="w-5 h-5"/> GESTÃO DO PLANO ATUAL</h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                            <h4 className="font-bold text-gray-300 text-sm mb-2">STATUS DO PLANO</h4>
+                            <p className="text-xs text-gray-500 mb-4">Pausar o plano interrompe a geração de novas metas diárias até que você retorne.</p>
+                            <button 
+                                onClick={() => onPlanAction('pause')}
+                                className={`w-full py-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition ${isPlanPaused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-yellow-600 hover:bg-yellow-500 text-white'}`}
+                            >
+                                {isPlanPaused ? <Icon.Play className="w-4 h-4"/> : <Icon.Pause className="w-4 h-4"/>}
+                                {isPlanPaused ? 'RETOMAR PLANO' : 'PAUSAR PLANO'}
+                            </button>
+                        </div>
+
+                        <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                            <h4 className="font-bold text-gray-300 text-sm mb-2">ATRASOS E IMPREVISTOS</h4>
+                            <p className="text-xs text-gray-500 mb-4">Replanejar define a data de início para HOJE, redistribuindo todas as metas pendentes.</p>
+                            <button 
+                                onClick={() => { if(confirm("Isso vai reorganizar todo o cronograma futuro a partir de hoje. Continuar?")) onPlanAction('reschedule'); }}
+                                className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition"
+                            >
+                                <Icon.RefreshCw className="w-4 h-4"/>
+                                REPLANEJAR ATRASOS
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ROUTINE SETUP */}
+            <div className="glass p-8 rounded-2xl border border-white/10">
+                <div className="text-center mb-10">
+                    <Icon.Clock className="w-16 h-16 text-insanus-red mx-auto mb-4" />
+                    <h2 className="text-3xl font-black text-white uppercase tracking-tight">Configuração de Rotina</h2>
+                    <p className="text-gray-400 mt-2 text-sm">Defina seu ritmo e disponibilidade.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                    <div>
+                        <h3 className="text-lg font-bold text-white mb-4 border-b border-white/10 pb-2 flex items-center gap-2">
+                            <Icon.User className="w-4 h-4 text-insanus-red"/> SEU NÍVEL
+                        </h3>
+                        <div className="space-y-3">
+                            {[
+                                { id: 'iniciante', label: 'Iniciante', desc: 'Ritmo mais lento de leitura.' },
+                                { id: 'intermediario', label: 'Intermediário', desc: 'Ritmo médio e constante.' },
+                                { id: 'avancado', label: 'Avançado', desc: 'Leitura dinâmica e foco em revisão.' }
+                            ].map((opt) => (
+                                <div 
+                                    key={opt.id}
+                                    onClick={() => setLevel(opt.id as UserLevel)}
+                                    className={`p-3 rounded-xl border cursor-pointer transition-all ${level === opt.id ? 'bg-insanus-red/20 border-insanus-red shadow-neon' : 'bg-black/40 border-white/5 hover:border-white/20'}`}
+                                >
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className={`font-bold uppercase text-sm ${level === opt.id ? 'text-white' : 'text-gray-400'}`}>{opt.label}</span>
+                                        {level === opt.id && <Icon.Check className="w-4 h-4 text-insanus-red"/>}
+                                    </div>
+                                    <p className="text-[10px] text-gray-500">{opt.desc}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 className="text-lg font-bold text-white mb-4 border-b border-white/10 pb-2 flex items-center gap-2">
+                            <Icon.Calendar className="w-4 h-4 text-insanus-red"/> DISPONIBILIDADE (MIN)
+                        </h3>
+                        <div className="space-y-2">
+                            {WEEKDAYS.map(d => (
+                                <div key={d.key} className="flex items-center justify-between bg-black/40 p-2 px-3 rounded border border-white/5 hover:border-white/20 transition">
+                                    <span className="text-xs font-bold text-gray-300 uppercase">{d.label}</span>
+                                    <div className="flex items-center gap-2">
+                                        <input 
+                                            type="number" 
+                                            value={days[d.key] || ''} 
+                                            onChange={e => handleDayChange(d.key, e.target.value)}
+                                            placeholder="0"
+                                            className="w-16 bg-white/5 border border-white/10 rounded p-1 text-right text-white font-mono text-sm focus:border-insanus-red outline-none focus:bg-black"
+                                        />
+                                        <span className="text-[10px] text-gray-600">min</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <button onClick={() => onSave({ days }, level)} className="w-full mt-10 bg-insanus-red hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow-neon transition transform hover:scale-[1.01] flex items-center justify-center gap-2">
+                    <Icon.RefreshCw className="w-5 h-5"/> SALVAR ALTERAÇÕES
+                </button>
+            </div>
+        </div>
+    );
+};
+
+// --- SCHEDULE ENGINE ---
+const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: string, completedGoals: string[], userLevel: UserLevel, isPaused: boolean): Record<string, ScheduledItem[]> => {
+    const schedule: Record<string, ScheduledItem[]> = {};
+    
+    // If paused, we basically return empty or handle it in UI. 
+    // Returning empty here ensures the calendar/daily view is clear.
+    if (isPaused) return {}; 
+    if (!plan || !plan.cycles || plan.cycles.length === 0) return {};
+    
+    const hasAvailability = Object.values(routine.days || {}).some(v => v > 0);
+    if (!hasAvailability) return {};
+
+    const startDate = new Date((startDateStr || getTodayStr()) + 'T00:00:00');
+    const MAX_DAYS = 90; 
+    
+    const disciplineQueues: Record<string, Goal[]> = {};
+    plan.disciplines.forEach(d => {
+        const flatGoals: Goal[] = [];
+        const sortedSubjects = [...d.subjects].sort((a,b) => a.order - b.order);
+        sortedSubjects.forEach(s => {
+             const sortedGoals = [...s.goals].sort((a,b) => a.order - b.order);
+             sortedGoals.forEach(g => {
+                 (g as any)._subjectName = s.name;
+                 (g as any)._disciplineName = d.name;
+                 flatGoals.push(g);
+             });
+        });
+        disciplineQueues[d.id] = flatGoals;
+    });
+
+    const disciplinePointers: Record<string, number> = {};
+    plan.disciplines.forEach(d => { disciplinePointers[d.id] = 0; });
+
+    let currentCycleIndex = 0;
+    let currentItemIndex = 0;
+
+    for (let dayOffset = 0; dayOffset < MAX_DAYS; dayOffset++) {
+        const currentDate = new Date(startDate);
+        currentDate.setDate(startDate.getDate() + dayOffset);
+        const dateStr = currentDate.toISOString().split('T')[0];
+        const dayName = getDayName(dateStr);
+        
+        let minutesAvailable = routine.days[dayName] || 0;
+        const dayItems: ScheduledItem[] = [];
+
+        if (minutesAvailable === 0) continue;
+
+        let itemsProcessedToday = 0;
+        let safetyLoop = 0;
+
+        while (minutesAvailable > 0 && safetyLoop < 50) {
+            safetyLoop++;
+
+            const cycle = plan.cycles[currentCycleIndex];
+            if (!cycle) {
+                if (plan.cycleSystem === 'rotativo' && plan.cycles.length > 0) {
+                    currentCycleIndex = 0;
+                    currentItemIndex = 0;
+                    continue;
+                }
+                break;
+            }
+
+            const cycleItem = cycle.items[currentItemIndex];
+            if (!cycleItem) {
+                currentCycleIndex++;
+                currentItemIndex = 0;
+                continue;
+            }
+
+            const queue = disciplineQueues[cycleItem.disciplineId];
+            let pointer = disciplinePointers[cycleItem.disciplineId];
+
+            if (!queue || queue.length === 0) {
+                currentItemIndex++;
+                continue;
+            }
+
+            let scheduledForThisItem = 0;
+            
+            while (scheduledForThisItem < cycleItem.subjectsCount) {
+                if (pointer >= queue.length) {
+                    break; 
+                }
+
+                const goal = queue[pointer];
+                const duration = calculateGoalDuration(goal, userLevel) || 30;
+
+                if (minutesAvailable >= duration || itemsProcessedToday === 0) {
+                    const uniqueId = `${dateStr}_${cycle.id}_${cycleItem.disciplineId}_${goal.id}`;
+                    
+                    dayItems.push({
+                         uniqueId,
+                         date: dateStr,
+                         goalId: goal.id,
+                         goalType: goal.type,
+                         title: goal.title,
+                         disciplineName: (goal as any)._disciplineName || "Disciplina",
+                         subjectName: (goal as any)._subjectName || "Assunto",
+                         duration: duration,
+                         isRevision: false,
+                         completed: completedGoals.includes(goal.id),
+                         originalGoal: goal
+                    });
+
+                    minutesAvailable -= duration;
+                    itemsProcessedToday++;
+                    
+                    pointer++;
+                    disciplinePointers[cycleItem.disciplineId] = pointer;
+                    
+                    scheduledForThisItem++;
+                } else {
+                    minutesAvailable = 0;
+                    break;
+                }
+            }
+            currentItemIndex++;
+        }
+
+        if (dayItems.length > 0) {
+            schedule[dateStr] = dayItems;
+        }
     }
 
     return schedule;
 };
 
-
-// --- Helper Components ---
-
-const CalendarHeader = ({ currentDate, mode, onPrev, onNext, onModeChange }: any) => (
-    <div className="flex items-center justify-between mb-6">
-        <div>
-            <h2 className="text-3xl font-black text-white uppercase tracking-tighter">
-                {currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
-            </h2>
-            <div className="text-xs text-gray-500 font-mono">VISÃO GERAL DO PLANEJAMENTO</div>
-        </div>
-        <div className="flex gap-4">
-            <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
-                <button onClick={() => onModeChange('month')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-all ${mode === 'month' ? 'bg-insanus-red text-white' : 'text-gray-400 hover:text-white'}`}>Mês</button>
-                <button onClick={() => onModeChange('week')} className={`px-4 py-2 rounded text-xs font-bold uppercase transition-all ${mode === 'week' ? 'bg-insanus-red text-white' : 'text-gray-400 hover:text-white'}`}>Semana</button>
-            </div>
-            <div className="flex gap-1">
-                <button onClick={onPrev} className="p-3 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 text-white"><Icon.ChevronDown className="w-5 h-5 rotate-90" /></button>
-                <button onClick={onNext} className="p-3 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 text-white"><Icon.ChevronRight className="w-5 h-5" /></button>
-            </div>
-        </div>
-    </div>
-);
-
-// --- Main Component ---
-
 export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToAdmin }) => {
-  const [view, setView] = useState<'config' | 'calendar' | 'daily' | 'edital'>('daily');
+  const [view, setView] = useState<'setup' | 'daily' | 'calendar' | 'edital' | 'simulados'>('daily');
+  const [calendarMode, setCalendarMode] = useState<'month' | 'week'>('week');
+  
+  // Data State
   const [plans, setPlans] = useState<StudyPlan[]>([]);
-  const [selectedPlan, setSelectedPlan] = useState<StudyPlan | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<StudyPlan | null>(null);
+  const [schedule, setSchedule] = useState<Record<string, ScheduledItem[]>>({});
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
   
-  const [tempRoutine, setTempRoutine] = useState<Routine>(() => {
-      const initial = user.routine ? JSON.parse(JSON.stringify(user.routine)) : { days: {} };
-      if (!initial.days) initial.days = {};
-      return initial;
-  });
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  // Timer State
+  const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const timerRef = useRef<any>(null);
 
-  const [calendarMode, setCalendarMode] = useState<'month' | 'week'>('month');
-  const [calendarDate, setCalendarDate] = useState(new Date());
+  // Simulados Data
+  const [simuladoClasses, setSimuladoClasses] = useState<SimuladoClass[]>([]);
+  const [attempts, setAttempts] = useState<SimuladoAttempt[]>([]);
+  const [activeSimulado, setActiveSimulado] = useState<Simulado | null>(null);
 
-  const [activeTimer, setActiveTimer] = useState<string | null>(null); 
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [isPaused, setIsPaused] = useState(false);
-  
-  // PDF Processing State
-  const [processingPdf, setProcessingPdf] = useState<string | null>(null);
-  
-  // Accordion State for Goal Cards (Subgoals visibility)
-  const [expandedGoals, setExpandedGoals] = useState<Record<string, boolean>>({});
+  // Calendar State
+  const [selectedDate, setSelectedDate] = useState(getTodayStr());
 
-  const toggleGoalExpand = (id: string) => {
-      setExpandedGoals(prev => ({ ...prev, [id]: !prev[id] }));
-  };
+  useEffect(() => { loadData(); }, [user.id]); 
 
+  // --- TIMER LOGIC ---
   useEffect(() => {
-      if (user.routine) {
-          const fresh = JSON.parse(JSON.stringify(user.routine));
-          if (!fresh.days) fresh.days = {};
-          setTempRoutine(fresh);
-      }
-  }, [user.routine]);
-
-  useEffect(() => {
-    const loadPlans = async () => {
-        const dbPlans = await fetchPlansFromDB();
-        const allowedPlans = user.isAdmin 
-            ? dbPlans 
-            : dbPlans.filter(p => user.allowedPlans?.includes(p.id));
-        setPlans(allowedPlans.length > 0 ? allowedPlans : []); 
-        if (user.currentPlanId) {
-            const current = dbPlans.find(p => p.id === user.currentPlanId);
-            if(current) setSelectedPlan(current);
-        }
-    };
-    loadPlans();
-  }, [user.allowedPlans, user.currentPlanId, user.isAdmin]);
-
-  // Derived State for Current Plan Configuration
-  const currentPlanConfig = selectedPlan ? (user.planConfigs?.[selectedPlan.id] || { startDate: new Date().toISOString(), isPaused: false }) : null;
-
-  const schedule = useMemo<Record<string, ScheduledItem[]>>(() => {
-      if (!selectedPlan) return {};
-      const safeRoutine = user.routine && user.routine.days ? user.routine : { days: {} };
-      if (Object.keys(safeRoutine.days).length === 0) return {};
-      
-      // Pass the config derived from User state
-      return generateSchedule(selectedPlan, safeRoutine, user);
-  }, [selectedPlan, user.routine, user.level, user.progress?.completedGoalIds, user.planConfigs]);
-
-  useEffect(() => {
-    let interval: any;
-    if (activeTimer && !isPaused) {
-        interval = setInterval(() => setElapsedTime(t => t + 1), 1000);
-    }
-    return () => clearInterval(interval);
-  }, [activeTimer, isPaused]);
-
-  // --- SECURE PDF HANDLER (Embed Watermark & Native Open) ---
-  const handleOpenSecurePdf = async (url: string) => {
-      setProcessingPdf(url);
-      
-      try {
-          // 1. Fetch original PDF
-          const response = await fetch(url);
-          const existingPdfBytes = await response.arrayBuffer();
-
-          // 2. Load PDF into pdf-lib
-          const pdfDoc = await PDFDocument.load(existingPdfBytes);
-          const pages = pdfDoc.getPages();
-          
-          // 3. Embed font (Standard Helvetica is lightweight)
-          const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-          const fontSize = 10;
-          const text = `${user.name} - ${user.cpf}`;
-
-          // 4. Draw Watermark on EVERY page
-          pages.forEach((page) => {
-              const { width, height } = page.getSize();
-              const xStep = 200;
-              const yStep = 200;
-
-              for (let x = -100; x < width + 100; x += xStep) {
-                  for (let y = -100; y < height + 100; y += yStep) {
-                      page.drawText(text, {
-                          x,
-                          y,
-                          size: fontSize,
-                          font: font,
-                          color: rgb(1, 0.2, 0.2), // Red
-                          opacity: 0.15, // Very soft opacity
-                          rotate: degrees(45), 
-                      });
-                  }
-              }
-          });
-
-          // 5. Save the modified PDF
-          const pdfBytes = await pdfDoc.save();
-          
-          // 6. Create Blob & Open in New Tab
-          const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-          const blobUrl = URL.createObjectURL(blob);
-          
-          window.open(blobUrl, '_blank');
-
-      } catch (error) {
-          console.error("Erro ao processar PDF:", error);
-          alert("Não foi possível carregar o documento seguro. Verifique sua conexão.");
-      } finally {
-          setProcessingPdf(null);
-      }
-  };
-
-
-  const handleStart = (id: string) => {
-      if (activeTimer === id) return;
-      setActiveTimer(id);
-      setElapsedTime(0);
-      setIsPaused(false);
-  };
-
-  // General Finish (for standard goals or bulk finish)
-  const handleFinish = async (item: ScheduledItem) => {
-      setActiveTimer(null);
-      const newProgress = user.progress 
-        ? { ...user.progress } 
-        : { completedGoalIds: [], completedRevisionIds: [], totalStudySeconds: 0, planStudySeconds: {} };
-      
-      if (!newProgress.completedGoalIds) newProgress.completedGoalIds = [];
-      if (!newProgress.planStudySeconds) newProgress.planStudySeconds = {};
-      
-      // If it's a standard goal, mark the goal ID
-      if (!newProgress.completedGoalIds.includes(item.goalId)) {
-          newProgress.completedGoalIds.push(item.goalId);
-      }
-      
-      // Update Timers
-      newProgress.totalStudySeconds = (newProgress.totalStudySeconds || 0) + elapsedTime;
-      
-      if (selectedPlan) {
-          newProgress.planStudySeconds[selectedPlan.id] = (newProgress.planStudySeconds[selectedPlan.id] || 0) + elapsedTime;
-      }
-      
-      const updatedUser = { ...user, progress: newProgress };
-      onUpdateUser(updatedUser); 
-      try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
-  };
-
-  // Specific Subgoal Check (for AULA type)
-  const handleCheckSubGoal = async (goalId: string, subGoalId: string) => {
-      const newProgress = user.progress 
-        ? { ...user.progress } 
-        : { completedGoalIds: [], completedRevisionIds: [], totalStudySeconds: 0, planStudySeconds: {} };
-      
-      if (!newProgress.completedGoalIds) newProgress.completedGoalIds = [];
-      
-      const compositeId = `${goalId}::${subGoalId}`;
-      
-      if (newProgress.completedGoalIds.includes(compositeId)) {
-          // Uncheck
-          newProgress.completedGoalIds = newProgress.completedGoalIds.filter(id => id !== compositeId);
+      if (isTimerRunning) {
+          timerRef.current = setInterval(() => {
+              setTimerSeconds(prev => prev + 1);
+          }, 1000);
       } else {
-          // Check
-          newProgress.completedGoalIds.push(compositeId);
+          if (timerRef.current) clearInterval(timerRef.current);
+      }
+      return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [isTimerRunning]);
+
+  // Regenerate Schedule
+  useEffect(() => {
+      const hasRoutine = user.routine && user.routine.days && Object.values(user.routine.days).some((v: number) => v > 0);
+      
+      if (currentPlan && hasRoutine) {
+          const config = user.planConfigs?.[currentPlan.id];
+          const startDate = config?.startDate || getTodayStr();
+          const isPaused = config?.isPaused || false;
+
+          const generated = generateSchedule(
+              currentPlan, 
+              user.routine, 
+              startDate, 
+              user.progress.completedGoalIds, 
+              user.level || 'iniciante',
+              isPaused
+          );
+          setSchedule(generated);
+      } else {
+          setSchedule({});
+      }
+  }, [currentPlan, user.routine, user.progress.completedGoalIds, user.level, user.planConfigs]);
+
+  const loadData = async () => {
+      // 1. Plans
+      const allPlans = await fetchPlansFromDB();
+      const userPlans = user.isAdmin ? allPlans : allPlans.filter(p => user.allowedPlans?.includes(p.id));
+      setPlans(userPlans);
+
+      // Select Plan
+      let activePlan: StudyPlan | undefined;
+      if (user.currentPlanId) {
+          activePlan = userPlans.find(p => p.id === user.currentPlanId);
+      }
+      if (!activePlan && userPlans.length > 0) {
+          activePlan = userPlans[0];
       }
       
-      const updatedUser = { ...user, progress: newProgress };
-      onUpdateUser(updatedUser);
-      try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
-  }
+      if (activePlan) {
+          setCurrentPlan(activePlan);
+          
+          if (!user.planConfigs || !user.planConfigs[activePlan.id]) {
+               const newConfigs = { ...user.planConfigs, [activePlan.id]: { startDate: getTodayStr(), isPaused: false }};
+               const updatedUser = { ...user, planConfigs: newConfigs, currentPlanId: activePlan.id };
+               onUpdateUser(updatedUser);
+               saveUserToDB(updatedUser); 
+          }
+      }
 
-  const handleSaveRoutine = async () => {
-      setSaveStatus('saving');
-      const routineToSave = JSON.parse(JSON.stringify(tempRoutine));
-      const updatedUser = { ...user, routine: routineToSave };
-      try {
-          await saveUserToDB(updatedUser);
+      // 2. Simulados
+      const allClasses = await fetchSimuladoClassesFromDB();
+      const userClasses = user.isAdmin ? allClasses : allClasses.filter(c => user.allowedSimuladoClasses?.includes(c.id));
+      setSimuladoClasses(userClasses);
+      const allAttempts = await fetchSimuladoAttemptsFromDB();
+      setAttempts(allAttempts);
+      
+      // 3. Check Routine
+      const hasRoutine = user.routine && user.routine.days && Object.values(user.routine.days).some((v: number) => v > 0);
+      if (!hasRoutine) {
+          setView('setup'); 
+      }
+  };
+
+  const handleSelectPlan = (planId: string) => {
+      const p = plans.find(pl => pl.id === planId);
+      if (p) {
+          setCurrentPlan(p);
+          const newConfigs = { ...user.planConfigs };
+          if (!newConfigs[p.id]) {
+              newConfigs[p.id] = { startDate: getTodayStr(), isPaused: false };
+          }
+          const updatedUser = { ...user, currentPlanId: planId, planConfigs: newConfigs };
           onUpdateUser(updatedUser);
-          setSaveStatus('success');
-          setTimeout(() => setSaveStatus('idle'), 3000);
-      } catch (error) {
-          console.error("Erro ao salvar rotina:", error);
-          setSaveStatus('error');
-          setTimeout(() => setSaveStatus('idle'), 3000);
+          saveUserToDB(updatedUser);
       }
   };
 
-  const handleSelectPlan = async (planId: string) => {
-      const updatedUser = { ...user, currentPlanId: planId };
-      const found = plans.find(p => p.id === planId);
-      if(found) setSelectedPlan(found);
-      onUpdateUser(updatedUser);
-      try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
-  };
-
-  const handleReplan = async () => {
-      if (!selectedPlan) return;
-      if (!confirm("Isso reorganizará todo o seu calendário futuro a partir de HOJE, jogando as metas atrasadas para frente. Deseja continuar?")) return;
-
-      const newConfig: PlanConfig = {
-          startDate: new Date().toISOString(), // Start fresh from Today
-          isPaused: false
-      };
+  const handleSetupSave = async (routine: Routine, level: UserLevel) => {
+      const updatedUser = { ...user, routine, level };
       
-      const updatedUser = { 
-          ...user, 
-          planConfigs: {
-              ...(user.planConfigs || {}),
-              [selectedPlan.id]: newConfig
-          }
-      };
+      if (currentPlan) {
+           const newConfigs = { ...updatedUser.planConfigs };
+           if (!newConfigs[currentPlan.id]) {
+               newConfigs[currentPlan.id] = { startDate: getTodayStr(), isPaused: false };
+           }
+           updatedUser.planConfigs = newConfigs;
+           updatedUser.currentPlanId = currentPlan.id;
+      }
 
       onUpdateUser(updatedUser);
-      try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
+      await saveUserToDB(updatedUser);
+      setView('daily');
   };
 
-  const handleTogglePause = async () => {
-      if (!selectedPlan || !currentPlanConfig) return;
-      const isPaused = !currentPlanConfig.isPaused;
+  const handlePlanAction = async (action: 'pause' | 'reschedule') => {
+      if (!currentPlan) return;
+      const config = user.planConfigs[currentPlan.id] || { startDate: getTodayStr(), isPaused: false };
       
-      const updatedUser = { 
-          ...user, 
-          planConfigs: {
-              ...(user.planConfigs || {}),
-              [selectedPlan.id]: {
-                  ...currentPlanConfig,
-                  isPaused
-              }
-          }
+      let newConfig = { ...config };
+      
+      if (action === 'pause') {
+          newConfig.isPaused = !newConfig.isPaused;
+      } else if (action === 'reschedule') {
+          newConfig.startDate = getTodayStr(); // Reset start date to NOW
+          newConfig.isPaused = false; // Unpause if rescheduling
+      }
+
+      const updatedUser = {
+          ...user,
+          planConfigs: { ...user.planConfigs, [currentPlan.id]: newConfig }
       };
 
       onUpdateUser(updatedUser);
-      try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
+      await saveUserToDB(updatedUser);
   };
 
-  const handleResetPlan = async () => {
-      if (!selectedPlan) return;
-      if (!confirm("ATENÇÃO: Isso irá reiniciar todo o seu progresso neste plano. Todas as metas concluídas serão desmarcadas e o calendário voltará para o dia 1. Deseja continuar?")) return;
+  // --- TIMER ACTIONS ---
+  const startTimer = (goalId: string) => {
+      if (activeGoalId && activeGoalId !== goalId) {
+          // Stop previous timer automatically
+          saveStudyTime();
+      }
+      setActiveGoalId(goalId);
+      setIsTimerRunning(true);
+  };
 
-      // 1. Collect all Goal IDs from the current plan to remove them from progress
-      const planGoalIds: string[] = [];
-      selectedPlan.disciplines?.forEach((d: Discipline) => {
-          d.subjects?.forEach((s: Subject) => {
-              s.goals?.forEach((g: Goal) => {
-                  planGoalIds.push(g.id);
-                  if (g.subGoals) {
-                      g.subGoals.forEach((sub: SubGoal) => planGoalIds.push(`${g.id}::${sub.id}`));
-                  }
-              });
-          });
-      });
+  const pauseTimer = () => {
+      setIsTimerRunning(false);
+  };
 
-      // 2. Filter User Progress
-      const newCompleted = (user.progress?.completedGoalIds || []).filter(id => !planGoalIds.includes(id));
-      const newPlanSeconds = { ...user.progress?.planStudySeconds };
-      delete newPlanSeconds[selectedPlan.id];
+  const saveStudyTime = async (shouldCompleteGoal: boolean = false) => {
+      if (!activeGoalId || timerSeconds === 0) {
+          if (shouldCompleteGoal && activeGoalId) toggleGoalComplete(activeGoalId);
+          setActiveGoalId(null);
+          setTimerSeconds(0);
+          setIsTimerRunning(false);
+          return;
+      }
 
-      // 3. Reset Start Date
-      const newConfig: PlanConfig = {
-          startDate: new Date().toISOString(),
-          isPaused: false
-      };
-
+      // Persist Time
+      const secondsToAdd = timerSeconds;
+      const newTotal = (user.progress.totalStudySeconds || 0) + secondsToAdd;
+      const currentPlanTotal = (user.progress.planStudySeconds?.[currentPlan?.id || ''] || 0) + secondsToAdd;
+      
       const updatedUser = {
           ...user,
           progress: {
               ...user.progress,
-              completedGoalIds: newCompleted,
-              planStudySeconds: newPlanSeconds
-          },
-          planConfigs: {
-              ...(user.planConfigs || {}),
-              [selectedPlan.id]: newConfig
+              totalStudySeconds: newTotal,
+              planStudySeconds: {
+                  ...user.progress.planStudySeconds,
+                  [currentPlan?.id || 'unknown']: currentPlanTotal
+              }
           }
       };
 
+      // Reset Timer State locally first
+      setActiveGoalId(null);
+      setTimerSeconds(0);
+      setIsTimerRunning(false);
+
+      // If we need to mark as complete
+      if (shouldCompleteGoal && activeGoalId) {
+          // Add to completed list
+          if (!updatedUser.progress.completedGoalIds.includes(activeGoalId)) {
+              updatedUser.progress.completedGoalIds.push(activeGoalId);
+          }
+      }
+
       onUpdateUser(updatedUser);
-      try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
+      await saveUserToDB(updatedUser);
   };
 
-  const handleLevelChange = async (level: UserLevel) => {
-      const updatedUser = { ...user, level };
+  const toggleGoalComplete = async (goalId: string) => {
+      // If timer is running for THIS goal, save time and finish
+      if (activeGoalId === goalId) {
+          await saveStudyTime(true);
+          return;
+      }
+
+      const isCompleted = user.progress.completedGoalIds.includes(goalId);
+      let newCompleted = [...user.progress.completedGoalIds];
+      
+      if (isCompleted) {
+          newCompleted = newCompleted.filter(id => id !== goalId);
+      } else {
+          newCompleted.push(goalId);
+      }
+      
+      const updatedUser = {
+          ...user,
+          progress: { ...user.progress, completedGoalIds: newCompleted }
+      };
+      
       onUpdateUser(updatedUser);
-      try { await saveUserToDB(updatedUser); } catch (e) { console.warn(e); }
+      await saveUserToDB(updatedUser);
   };
 
-  // --- Renderers ---
+  const toggleAccordion = (uniqueId: string) => {
+      setExpandedItems(prev => prev.includes(uniqueId) ? prev.filter(id => id !== uniqueId) : [...prev, uniqueId]);
+  }
 
-  const renderConfig = () => {
-      return (
-      <div className="p-10 max-w-7xl mx-auto h-full overflow-y-auto">
-          <div className="mb-12 flex justify-between items-end">
-            <div>
-                <h2 className="text-4xl font-black text-white tracking-tighter mb-2">SETUP DE <span className="text-insanus-red">ROTINA</span></h2>
-                <p className="text-gray-500 font-mono text-sm max-w-xl">Configure seu perfil e disponibilidade.</p>
-            </div>
-            {selectedPlan && currentPlanConfig && (
-                <div className="flex gap-3">
-                    <button onClick={handleResetPlan} className="px-6 py-3 rounded-xl border border-red-900/50 text-red-700 hover:bg-red-900/20 hover:text-red-500 hover:border-red-500 font-bold flex items-center gap-2 transition-all">
-                        <Icon.Trash className="w-5 h-5" /> REINICIAR PLANO
-                    </button>
-                    <button onClick={handleTogglePause} className={`px-6 py-3 rounded-xl border font-bold flex items-center gap-2 transition-all ${currentPlanConfig.isPaused ? 'bg-green-600 border-green-500 text-white' : 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700 hover:text-white'}`}>
-                        {currentPlanConfig.isPaused ? <Icon.Play className="w-5 h-5" /> : <Icon.Pause className="w-5 h-5" />}
-                        {currentPlanConfig.isPaused ? 'RETOMAR PLANO' : 'PAUSAR PLANO'}
-                    </button>
-                </div>
-            )}
-          </div>
+  // --- RENDERERS ---
 
-          {/* LEVEL SELECTOR */}
-          <div className="mb-10">
-                <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                    <span className="w-2 h-8 bg-white"></span>
-                    SEU PERFIL DE ESTUDANTE
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {[
-                        { id: 'iniciante', label: 'INICIANTE', desc: 'Leitura Detalhada (5 min/pág)' },
-                        { id: 'intermediario', label: 'INTERMEDIÁRIO', desc: 'Leitura Dinâmica (3 min/pág)' },
-                        { id: 'avancado', label: 'AVANÇADO', desc: 'Alta Performance (1 min/pág)' }
-                    ].map((lvl) => (
-                        <button
-                            key={lvl.id}
-                            onClick={() => handleLevelChange(lvl.id as UserLevel)}
-                            className={`p-6 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all group relative overflow-hidden ${user.level === lvl.id ? 'bg-insanus-red text-white border-insanus-red shadow-neon' : 'bg-black/40 border-white/10 hover:border-white/30 text-gray-500 hover:text-white'}`}
-                        >
-                            {user.level === lvl.id && <div className="absolute top-2 right-2"><Icon.Check className="w-5 h-5" /></div>}
-                            <span className="text-lg font-black uppercase tracking-widest">{lvl.label}</span>
-                            <span className={`text-[10px] font-mono ${user.level === lvl.id ? 'text-white/80' : 'text-gray-600 group-hover:text-gray-400'}`}>
-                                {lvl.desc}
-                            </span>
-                        </button>
-                    ))}
-                </div>
-          </div>
-          
-          <div className="glass border border-white/5 rounded-2xl p-8 mb-10 relative overflow-hidden">
-              <h3 className="text-xl font-bold text-white mb-6">DISPONIBILIDADE SEMANAL</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {WEEKDAYS.map(day => {
-                      const isEnabled = tempRoutine.days && tempRoutine.days[day.key] !== undefined;
-                      const totalMinutes = (tempRoutine.days && tempRoutine.days[day.key]) || 0;
-                      const hours = Math.floor(totalMinutes / 60);
-                      const minutes = totalMinutes % 60;
+  const renderDailyView = () => {
+      const daySchedule = schedule[selectedDate] || [];
+      const isToday = selectedDate === getTodayStr();
+      const dayName = getDayName(selectedDate);
+      const minsAvailable = user.routine?.days?.[dayName] || 0;
+      const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
 
-                      return (
-                      <div key={day.key} className={`p-5 rounded-xl border transition-all duration-300 group hover:scale-[1.02] ${isEnabled ? 'bg-gradient-to-br from-insanus-red/10 to-transparent border-insanus-red/50 shadow-neon' : 'bg-black/40 border-white/5 hover:border-white/20'}`}>
-                          <div className="flex justify-between items-center mb-4">
-                              <span className={`font-black text-sm uppercase tracking-wider ${isEnabled ? 'text-white' : 'text-gray-500'}`}>{day.label}</span>
-                              <div className="relative inline-block w-10 h-6 transition duration-200 ease-in-out">
-                                  <input type="checkbox" id={`toggle-${day.key}`} className="absolute opacity-0 w-full h-full cursor-pointer z-10" 
-                                    checked={isEnabled}
-                                    onChange={(e) => {
-                                      const newDays = { ...tempRoutine.days };
-                                      if(e.target.checked) newDays[day.key] = 60; 
-                                      else delete newDays[day.key];
-                                      setTempRoutine({ ...tempRoutine, days: newDays });
-                                  }} />
-                                  <div className={`block w-full h-full rounded-full transition-colors ${isEnabled ? 'bg-insanus-red' : 'bg-gray-700'}`}></div>
-                                  <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${isEnabled ? 'translate-x-4' : ''}`}></div>
-                              </div>
-                          </div>
-                          
-                          <div className={`transition-all duration-300 ${isEnabled ? 'opacity-100' : 'opacity-20 pointer-events-none'}`}>
-                              <div className="flex items-center gap-2">
-                                  <div className="flex-1 bg-black/30 rounded-lg p-2 border border-white/10 flex items-center">
-                                      <input type="number" min="0" max="23" className="bg-transparent border-none outline-none w-full text-center text-white font-mono text-lg font-bold"
-                                          value={hours}
-                                          onChange={(e) => {
-                                              const h = Math.max(0, parseInt(e.target.value) || 0);
-                                              const newTotal = (h * 60) + minutes;
-                                              const newDays = { ...tempRoutine.days, [day.key]: newTotal };
-                                              setTempRoutine({ ...tempRoutine, days: newDays });
-                                          }}
-                                      />
-                                      <span className="text-[9px] text-gray-500 font-bold uppercase mr-1">H</span>
-                                  </div>
-                                  <div className="text-gray-600 font-bold">:</div>
-                                  <div className="flex-1 bg-black/30 rounded-lg p-2 border border-white/10 flex items-center">
-                                      <input type="number" min="0" max="59" className="bg-transparent border-none outline-none w-full text-center text-white font-mono text-lg font-bold"
-                                          value={minutes}
-                                          onChange={(e) => {
-                                              let m = Math.max(0, parseInt(e.target.value) || 0);
-                                              if (m > 59) m = 59;
-                                              const newTotal = (hours * 60) + m;
-                                              const newDays = { ...tempRoutine.days, [day.key]: newTotal };
-                                              setTempRoutine({ ...tempRoutine, days: newDays });
-                                          }}
-                                      />
-                                      <span className="text-[9px] text-gray-500 font-bold uppercase mr-1">MIN</span>
-                                  </div>
-                              </div>
-                          </div>
-                      </div>
-                  )})}
-              </div>
-              
-              <div className="mt-8 flex justify-end">
-                  <button 
-                    type="button" 
-                    onClick={handleSaveRoutine} 
-                    disabled={saveStatus === 'saving'}
-                    className={`bg-insanus-red hover:bg-red-600 text-white font-bold py-3 px-8 rounded-lg shadow-neon transition-all flex items-center gap-2 ${saveStatus === 'saving' ? 'opacity-50 cursor-not-allowed' : ''} ${saveStatus === 'success' ? 'bg-green-600 hover:bg-green-600 border-green-500' : ''}`}
-                  >
-                      {saveStatus === 'saving' && <Icon.RefreshCw className="w-5 h-5 animate-spin" />}
-                      {saveStatus === 'success' && <Icon.Check className="w-5 h-5" />}
-                      {saveStatus === 'error' && <span className="text-xl">!</span>}
-                      
-                      {saveStatus === 'idle' && 'SALVAR CONFIGURAÇÕES'}
-                      {saveStatus === 'saving' && 'SALVANDO...'}
-                      {saveStatus === 'success' && 'ROTINA SALVA!'}
-                      {saveStatus === 'error' && 'ERRO AO SALVAR'}
-                  </button>
-              </div>
-          </div>
+      if (!currentPlan) return <div className="text-center p-10 text-gray-500">Selecione um plano no menu lateral para começar.</div>;
 
-          <div>
-              <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                  <span className="w-2 h-8 bg-white"></span>
-                  SEUS PLANOS HABILITADOS
-              </h3>
-              {plans.length === 0 ? (
-                  <div className="text-gray-500 font-mono text-sm border border-dashed border-gray-700 p-8 rounded-xl text-center">
-                      Nenhum plano habilitado pelo administrador ainda.
+      if (isPlanPaused) {
+          return (
+              <div className="flex flex-col items-center justify-center h-[50vh] animate-fade-in text-center">
+                  <div className="w-20 h-20 bg-yellow-500/10 rounded-full flex items-center justify-center mb-6">
+                      <Icon.Pause className="w-10 h-10 text-yellow-500" />
                   </div>
+                  <h2 className="text-3xl font-black text-white uppercase mb-2">PLANO PAUSADO</h2>
+                  <p className="text-gray-500 max-w-md">Seu cronograma está congelado. Retome o plano nas configurações para voltar a ver suas metas diárias.</p>
+                  <button onClick={() => setView('setup')} className="mt-6 bg-white/10 hover:bg-white/20 px-6 py-3 rounded-xl font-bold text-white transition">IR PARA CONFIGURAÇÕES</button>
+              </div>
+          )
+      }
+
+      if (currentPlan.cycles.length === 0) {
+           return (
+              <div className="p-8 border border-red-500/30 bg-red-900/10 rounded-xl text-center">
+                  <h3 className="text-red-500 font-bold mb-2">PLANO SEM CICLOS DEFINIDOS</h3>
+                  <p className="text-gray-400 text-sm">Este plano de estudo não possui ciclos de estudo configurados.</p>
+              </div>
+           );
+      }
+
+      if (minsAvailable === 0 && daySchedule.length === 0) {
+          return (
+              <div className="flex flex-col items-center justify-center p-10 border border-dashed border-white/10 rounded-xl animate-fade-in">
+                  <Icon.Clock className="w-10 h-10 text-insanus-red mb-4" />
+                  <h3 className="font-bold text-white text-lg">Dia sem estudos agendados</h3>
+                  <p className="text-gray-500 mb-4 max-w-md text-center">Você definiu 0 minutos para {WEEKDAYS.find(w=>w.key===dayName)?.label}.</p>
+                  <button onClick={() => setView('setup')} className="text-xs bg-white/10 hover:bg-white/20 px-4 py-2 rounded text-white font-bold uppercase transition">Ajustar Rotina</button>
+              </div>
+          );
+      }
+
+      return (
+          <div className="max-w-4xl mx-auto animate-fade-in space-y-6">
+              <div className="flex justify-between items-end border-b border-white/10 pb-4">
+                  <div>
+                      <h2 className="text-4xl font-black text-white uppercase tracking-tight">
+                          {isToday ? 'HOJE' : formatDate(selectedDate)}
+                      </h2>
+                      <p className="text-insanus-red font-mono text-sm uppercase">{WEEKDAYS.find(w => w.key === dayName)?.label}</p>
+                  </div>
+                  <div className="text-right">
+                      <div className="text-3xl font-black text-white">{daySchedule.length}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-bold">Metas</div>
+                  </div>
+              </div>
+
+              {daySchedule.length === 0 ? (
+                   <div className="text-center py-20 text-gray-600 italic border border-dashed border-white/5 rounded-xl">
+                       <p className="mb-2">Nada agendado para hoje.</p>
+                       <p className="text-xs">Verifique se as disciplinas do Ciclo possuem metas cadastradas.</p>
+                   </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {plans.map(p => (
-                        <div key={p.id} onClick={() => handleSelectPlan(p.id)}
-                            className={`cursor-pointer rounded-2xl overflow-hidden border transition-all relative group h-64 ${selectedPlan?.id === p.id ? 'border-insanus-red shadow-neon scale-[1.01]' : 'border-white/10 hover:border-white/30 hover:scale-[1.01]'}`}>
-                            <div className="absolute inset-0 z-0">
-                                <img src={p.coverImage} className="w-full h-full object-cover opacity-40 group-hover:opacity-60 transition duration-700" />
-                                <div className="absolute inset-0 bg-gradient-to-t from-insanus-black via-insanus-black/80 to-transparent"></div>
-                            </div>
-                            <div className="absolute bottom-0 left-0 right-0 p-6 z-10">
-                                <div className="text-[10px] font-mono text-insanus-red uppercase tracking-widest mb-1">
-                                    {selectedPlan?.id === p.id ? '● PLANO ATIVO' : '○ DISPONÍVEL'}
+                  <div className="grid gap-4">
+                      {daySchedule.map((item, idx) => {
+                          const goalColor = item.originalGoal?.color || '#FF1F1F';
+                          const isExpanded = expandedItems.includes(item.uniqueId);
+                          const isActive = activeGoalId === item.goalId;
+
+                          return (
+                            <div key={item.uniqueId} className={`glass rounded-xl border-l-4 transition-all ${item.completed ? 'border-green-500 opacity-60' : isActive ? 'border-yellow-500 bg-yellow-500/5 shadow-neon' : 'hover:translate-x-1'}`} style={{ borderLeftColor: item.completed ? undefined : isActive ? '#EAB308' : goalColor }}>
+                                <div className="p-4 flex items-start gap-4">
+                                    <div onClick={() => toggleGoalComplete(item.goalId)} className={`shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer transition ${item.completed ? 'bg-green-500 border-green-500 text-black' : 'border-gray-500 hover:border-white'}`}>
+                                        {item.completed && <Icon.Check className="w-4 h-4" />}
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="flex justify-between items-start mb-1">
+                                            <span className="text-[10px] font-bold bg-white/10 px-2 py-0.5 rounded text-gray-300 uppercase">{item.goalType}</span>
+                                            {isActive ? (
+                                                <span className="text-sm font-mono font-bold text-yellow-500 animate-pulse">{formatStopwatch(timerSeconds)}</span>
+                                            ) : (
+                                                <span className="text-[10px] font-mono text-gray-500">{item.duration} min</span>
+                                            )}
+                                        </div>
+                                        <h3 className={`font-bold text-lg ${item.completed ? 'line-through text-gray-500' : 'text-white'}`}>{item.title}</h3>
+                                        <div className="text-xs text-gray-400 mt-1 flex gap-2">
+                                            <span style={{ color: isActive ? '#EAB308' : goalColor }} className="font-bold">{item.disciplineName}</span>
+                                            <span>•</span>
+                                            <span>{item.subjectName}</span>
+                                        </div>
+                                        
+                                        {/* TIMER CONTROLS */}
+                                        {!item.completed && (
+                                            <div className="mt-4 flex gap-2">
+                                                {!isActive ? (
+                                                    <button onClick={() => startTimer(item.goalId)} className="flex items-center gap-2 bg-insanus-red hover:bg-red-600 px-4 py-2 rounded text-xs font-bold text-white transition shadow-neon">
+                                                        <Icon.Play className="w-3 h-3" /> INICIAR
+                                                    </button>
+                                                ) : (
+                                                    <>
+                                                        {isTimerRunning ? (
+                                                            <button onClick={pauseTimer} className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-500 px-4 py-2 rounded text-xs font-bold text-white transition">
+                                                                <Icon.Pause className="w-3 h-3" /> PAUSAR
+                                                            </button>
+                                                        ) : (
+                                                            <button onClick={() => setIsTimerRunning(true)} className="flex items-center gap-2 bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-xs font-bold text-white transition">
+                                                                <Icon.Play className="w-3 h-3" /> RETOMAR
+                                                            </button>
+                                                        )}
+                                                        <button onClick={() => saveStudyTime(false)} className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-xs font-bold text-white transition">
+                                                            <Icon.Check className="w-3 h-3" /> SALVAR TEMPO
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+                                        
+                                        {/* ACTION BUTTONS (NON-AULA) */}
+                                        {item.goalType !== 'AULA' && (
+                                            <div className="flex flex-wrap gap-2 mt-4 border-t border-white/5 pt-3">
+                                                {item.originalGoal?.pdfUrl && (
+                                                    <a href={item.originalGoal.pdfUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded text-xs font-bold text-white transition">
+                                                        <Icon.FileText className="w-4 h-4 text-insanus-red" /> ABRIR MATERIAL
+                                                    </a>
+                                                )}
+                                                {item.originalGoal?.link && (
+                                                    <a href={item.originalGoal.link} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded text-xs font-bold text-white transition">
+                                                        <Icon.Link className="w-4 h-4 text-blue-400" /> ACESSAR LINK
+                                                    </a>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* ACCORDION (AULA) */}
+                                        {item.goalType === 'AULA' && (
+                                            <div className="mt-4">
+                                                <button onClick={() => toggleAccordion(item.uniqueId)} className="flex items-center gap-2 text-xs font-bold text-gray-400 hover:text-white transition">
+                                                    {isExpanded ? <Icon.ArrowUp className="w-4 h-4"/> : <Icon.ArrowDown className="w-4 h-4"/>}
+                                                    {isExpanded ? 'OCULTAR AULAS' : `VER ${item.originalGoal?.subGoals?.length || 0} AULAS`}
+                                                </button>
+                                                
+                                                {isExpanded && (
+                                                    <div className="mt-3 space-y-2 border-t border-white/10 pt-3 animate-fade-in">
+                                                        {item.originalGoal?.subGoals?.map((sub, sIdx) => (
+                                                            <div key={sIdx} className="flex justify-between items-center bg-black/30 p-2 rounded border border-white/5">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-[10px] text-gray-500 font-mono">{sIdx + 1}</div>
+                                                                    <span className="text-sm text-gray-300 font-medium">{sub.title}</span>
+                                                                </div>
+                                                                {sub.link && (
+                                                                    <a href={sub.link} target="_blank" rel="noreferrer" className="bg-insanus-red hover:bg-red-600 text-white p-2 rounded-lg transition">
+                                                                        <Icon.Play className="w-3 h-3" />
+                                                                    </a>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                        {(!item.originalGoal?.subGoals || item.originalGoal.subGoals.length === 0) && (
+                                                            <div className="text-xs text-gray-600 italic">Nenhuma submeta cadastrada.</div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="font-black text-2xl text-white leading-tight mb-2 group-hover:text-insanus-red transition-colors">{p.name}</div>
                             </div>
-                        </div>
-                    ))}
-                </div>
+                          );
+                      })}
+                  </div>
               )}
           </div>
-      </div>
       );
   };
 
-  const renderEditalVerticalizado = () => {
-    if (!selectedPlan || !selectedPlan.editalVerticalizado || selectedPlan.editalVerticalizado.length === 0) {
-         return (
-              <div className="h-full flex flex-col items-center justify-center p-8 text-center glass m-8 rounded-2xl">
-                  <Icon.List className="w-16 h-16 text-gray-600 mb-6" />
-                  <h2 className="text-2xl font-black text-white mb-2">EDITAL NÃO DISPONÍVEL</h2>
-                  <p className="text-gray-500 max-w-md">
-                      Este plano ainda não possui um Edital Verticalizado configurado.
-                  </p>
+  const renderCalendarView = () => {
+      const weekDates = getWeekDays(selectedDate);
+      const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
+
+      if(isPlanPaused) return <div className="text-center p-20 text-yellow-500 font-bold">PLANO PAUSADO</div>;
+
+      const generateMonthGrid = () => {
+          const start = new Date(selectedDate);
+          start.setDate(1); 
+          const day = start.getDay();
+          start.setDate(start.getDate() - day);
+          const grid = [];
+          for(let i=0; i<35; i++) {
+               const d = new Date(start);
+               d.setDate(d.getDate() + i);
+               grid.push(d.toISOString().split('T')[0]);
+          }
+          return grid;
+      };
+      const monthDates = generateMonthGrid();
+
+      return (
+          <div className="max-w-7xl mx-auto animate-fade-in h-[calc(100vh-100px)] flex flex-col">
+              <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4 shrink-0">
+                  <h2 className="text-3xl font-black text-white">CALENDÁRIO</h2>
+                  <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
+                      <button onClick={() => setCalendarMode('week')} className={`px-4 py-1 text-xs font-bold rounded ${calendarMode === 'week' ? 'bg-insanus-red text-white' : 'text-gray-400 hover:text-white'}`}>SEMANAL</button>
+                      <button onClick={() => setCalendarMode('month')} className={`px-4 py-1 text-xs font-bold rounded ${calendarMode === 'month' ? 'bg-insanus-red text-white' : 'text-gray-400 hover:text-white'}`}>MENSAL</button>
+                  </div>
               </div>
-         );
-    }
+              
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                  {calendarMode === 'week' ? (
+                      <div className="grid grid-cols-7 gap-2 h-full min-h-[500px]">
+                          {weekDates.map((date, i) => {
+                              const items = schedule[date] || [];
+                              const isToday = date === getTodayStr();
+                              const isSelected = date === selectedDate;
+                              
+                              return (
+                                  <div key={date} className={`flex flex-col rounded-xl overflow-hidden border transition-all ${isToday ? 'border-insanus-red bg-insanus-red/5' : isSelected ? 'border-white/30 bg-white/5' : 'border-white/5 bg-black/20'}`}>
+                                      <div className={`p-2 text-center border-b border-white/5 ${isToday ? 'bg-insanus-red text-white' : 'bg-white/5'}`}>
+                                          <div className="text-[10px] font-bold uppercase">{['DOM','SEG','TER','QUA','QUI','SEX','SAB'][new Date(date+'T12:00:00').getDay()]}</div>
+                                          <div className="text-lg font-black">{date.split('-')[2]}</div>
+                                      </div>
+                                      <div 
+                                        className="flex-1 p-2 space-y-2 overflow-y-auto cursor-pointer"
+                                        onClick={() => { setSelectedDate(date); setView('daily'); }}
+                                      >
+                                          {items.map((item, idx) => {
+                                              const goalColor = item.originalGoal?.color || '#FF1F1F';
+                                              return (
+                                                  <div 
+                                                    key={idx} 
+                                                    className={`p-2 rounded text-[10px] border flex flex-col gap-1 transition ${item.completed ? 'bg-green-900/30 border-green-800 text-green-400 line-through' : 'bg-black border-white/10 text-gray-300 hover:border-white'}`}
+                                                    style={{ borderColor: item.completed ? undefined : goalColor }}
+                                                  >
+                                                      <div className="font-bold truncate" style={{ color: item.completed ? undefined : goalColor }}>{item.disciplineName}</div>
+                                                      <div className="truncate opacity-70 leading-tight">{item.title}</div>
+                                                  </div>
+                                              );
+                                          })}
+                                          {items.length === 0 && <div className="text-[9px] text-center text-gray-600 mt-4">-</div>}
+                                      </div>
+                                  </div>
+                              )
+                          })}
+                      </div>
+                  ) : (
+                      <div className="grid grid-cols-7 gap-2">
+                          {monthDates.map((date) => {
+                              const items = schedule[date] || [];
+                              const isSelected = date === selectedDate;
+                              const isToday = date === getTodayStr();
+                              return (
+                                  <div 
+                                    key={date} 
+                                    onClick={() => { setSelectedDate(date); setView('daily'); }}
+                                    className={`h-24 p-2 rounded-lg border cursor-pointer hover:bg-white/5 flex flex-col justify-between ${isSelected ? 'border-insanus-red bg-insanus-red/10' : isToday ? 'border-white bg-white/10' : 'border-white/5 bg-black/20'}`}
+                                  >
+                                      <div className={`text-right text-xs font-bold ${isToday ? 'text-insanus-red' : 'text-gray-500'}`}>{date.split('-')[2]}</div>
+                                      <div className="flex flex-wrap gap-1 content-end">
+                                          {items.slice(0, 6).map((item, i) => {
+                                               const goalColor = item.originalGoal?.color || '#FF1F1F';
+                                               return (
+                                                  <div 
+                                                    key={i} 
+                                                    className={`w-2 h-2 rounded-full ${item.completed ? 'bg-green-500' : ''}`} 
+                                                    style={{ backgroundColor: item.completed ? undefined : goalColor }}
+                                                    title={item.title}
+                                                  ></div>
+                                               );
+                                          })}
+                                          {items.length > 6 && <div className="w-2 h-2 rounded-full bg-gray-500 text-[6px] flex items-center justify-center text-white">+</div>}
+                                      </div>
+                                  </div>
+                              )
+                          })}
+                      </div>
+                  )}
+              </div>
+          </div>
+      )
+  };
 
-    // --- Helper to find actual Goal object ---
-    const getGoal = (goalId: string | undefined): Goal | undefined => {
-        if (!goalId) return undefined;
-        for (const disc of selectedPlan.disciplines) {
-            for (const sub of disc.subjects) {
-                const found = sub.goals.find(g => g.id === goalId);
-                if (found) return found;
-            }
-        }
-        return undefined;
-    };
+  const renderEditalView = () => {
+      if (!currentPlan?.editalVerticalizado) return <div className="p-10 text-center text-gray-500">Edital Verticalizado não configurado neste plano.</div>;
+      
+      let totalTopics = 0;
+      let completedTopics = 0;
 
-    // --- Helper to check completion ---
-    const isCompleted = (goalId: string | undefined): boolean => {
-        if (!goalId) return false;
-        // Check standard completion
-        if (user.progress?.completedGoalIds.includes(goalId)) return true;
-        // Check subgoals completion (if AULA)
-        const goal = getGoal(goalId);
-        if (goal && goal.type === 'AULA' && goal.subGoals) {
-             const allSubDone = goal.subGoals.every(sub => user.progress?.completedGoalIds.includes(`${goalId}::${sub.id}`));
-             return allSubDone;
-        }
-        return false;
-    };
+      const isTopicDone = (t: any) => {
+          const linkedGoals = Object.values(t.links || {}).filter(Boolean) as string[];
+          if (linkedGoals.length === 0) return false;
+          return linkedGoals.some(gid => user.progress.completedGoalIds.includes(gid));
+      };
 
-    // --- Helper to render Cell ---
-    const renderCell = (goalId: string | undefined, typeLabel: string) => {
-        const goal = getGoal(goalId);
-        const done = isCompleted(goalId);
-        
-        if (!goalId) return <div className="w-full h-full flex items-center justify-center text-gray-800 text-lg select-none">•</div>;
+      currentPlan.editalVerticalizado.forEach(d => {
+          d.topics.forEach(t => {
+              totalTopics++;
+              if (isTopicDone(t)) completedTopics++;
+          });
+      });
+      
+      const percentage = totalTopics === 0 ? 0 : Math.round((completedTopics / totalTopics) * 100);
 
-        return (
-            <div className="flex items-center justify-center w-full h-full">
-                <button 
-                    onClick={() => {
-                        // Open Link or PDF even if done
-                        if (goal?.pdfUrl) handleOpenSecurePdf(goal.pdfUrl);
-                        else if (goal?.link) window.open(goal.link, '_blank');
-                    }}
-                    className={`w-8 h-8 rounded flex items-center justify-center transition-all ${done ? 'bg-green-500 text-black shadow-neon' : 'bg-gray-800 text-gray-500 hover:bg-gray-700 hover:text-white'}`}
-                    title={goal ? `${goal.title} (${done ? 'Concluído' : 'Pendente'})` : 'Pendente'}
-                >
-                    {done ? <Icon.Check className="w-5 h-5" /> : (
-                        typeLabel === 'AULA' ? <Icon.Play className="w-4 h-4" /> :
-                        typeLabel === 'PDF' ? <Icon.FileText className="w-4 h-4" /> :
-                        typeLabel === 'QST' ? <Icon.Code className="w-4 h-4" /> :
-                        <Icon.Book className="w-4 h-4" />
-                    )}
-                </button>
-            </div>
-        );
-    };
+      return (
+          <div className="max-w-4xl mx-auto animate-fade-in space-y-8">
+              <div className="flex items-center justify-between border-b border-white/10 pb-6">
+                  <h2 className="text-3xl font-black text-white">EDITAL <span className="text-insanus-red">VERTICALIZADO</span></h2>
+                  <div className="text-right">
+                      <div className="text-4xl font-black text-white">{percentage}%</div>
+                      <div className="text-xs text-gray-500 uppercase font-bold">Concluído</div>
+                  </div>
+              </div>
 
-    // --- Helper for Revisions Cell ---
-    const renderRevisionsCell = (topicLinks: any) => {
-        // Collect relevant parent goals for auto-revision checking
-        const parents = [topicLinks.questoes, topicLinks.resumo, topicLinks.revisao].filter(Boolean);
-        
-        // We will simulate 4 Revision slots
-        const slots = [0, 1, 2, 3]; // Indices
+              <div className="space-y-6">
+                  {currentPlan.editalVerticalizado.map(disc => {
+                      const discTotal = disc.topics.length;
+                      const discDone = disc.topics.filter(t => isTopicDone(t)).length;
+                      const discPerc = discTotal === 0 ? 0 : (discDone / discTotal) * 100;
 
-        return (
-            <div className="flex items-center justify-center gap-1">
-                {slots.map(idx => {
-                    // Check if ANY of the linked parent goals has this revision index completed
-                    let isRevDone = false;
-                    
-                    parents.forEach(pid => {
-                        // 1. Explicit Revision Goal Linked?
-                        if (topicLinks.revisao === pid && isCompleted(pid)) {
-                            // If explicit revision linked, maybe we treat it as Rev 1? 
-                            // Simplification: Explicit linked revision counts as Rev 1.
-                            if (idx === 0) isRevDone = true;
-                        }
+                      return (
+                          <div key={disc.id} className="glass rounded-xl border border-white/5 overflow-hidden">
+                              <div className="bg-white/5 p-4 flex justify-between items-center cursor-pointer hover:bg-white/10">
+                                  <h3 className="font-bold text-white uppercase">{disc.name}</h3>
+                                  <div className="text-xs font-mono text-gray-400">{discDone}/{discTotal}</div>
+                              </div>
+                              <div className="h-1 w-full bg-black">
+                                  <div className="h-full bg-insanus-red transition-all duration-1000" style={{ width: `${discPerc}%` }}></div>
+                              </div>
+                              <div className="p-4 space-y-2">
+                                  {disc.topics.map(topic => {
+                                      const done = isTopicDone(topic);
+                                      return (
+                                          <div key={topic.id} className="flex items-center gap-3 text-sm group">
+                                              <div className={`w-4 h-4 rounded border flex items-center justify-center ${done ? 'bg-green-600 border-green-600' : 'border-gray-600'}`}>
+                                                  {done && <Icon.Check className="w-3 h-3 text-white" />}
+                                              </div>
+                                              <span className={done ? 'text-gray-500 line-through' : 'text-gray-300 group-hover:text-white transition'}>{topic.name}</span>
+                                          </div>
+                                      )
+                                  })}
+                              </div>
+                          </div>
+                      )
+                  })}
+              </div>
+          </div>
+      )
+  };
 
-                        // 2. Auto-Revision Check
-                        // Check if completedRevisionIds contains "pid_rev_idx"
-                        const revId = `${pid}_rev_${idx}`;
-                        if (user.progress?.completedRevisionIds?.includes(revId)) isRevDone = true;
-                    });
+  if (activeSimulado) {
+       const attempt = attempts.find(a => a.userId === user.id && a.simuladoId === activeSimulado.id);
+       const parentClass = simuladoClasses.find(c => c.simulados.some(s => s.id === activeSimulado.id));
+       return <SimuladoRunner 
+          user={user}
+          classId={parentClass?.id || ''}
+          simulado={activeSimulado} 
+          attempt={attempt} 
+          onFinish={async (ans) => { 
+               const newAttempts = [...attempts.filter(a => a.id !== ans.id), ans];
+               setAttempts(newAttempts);
+               await saveSimuladoAttemptToDB(ans);
+               setActiveSimulado(null);
+          }} 
+          onBack={() => setActiveSimulado(null)} 
+       />;
+  }
 
-                    return (
-                        <div key={idx} className={`w-3 h-3 rounded-full border border-white/10 ${isRevDone ? 'bg-insanus-red shadow-neon' : 'bg-black/40'}`} title={`Revisão ${idx+1}`}></div>
-                    )
-                })}
-            </div>
-        )
-    };
+  return (
+    <div className="flex h-full w-full bg-insanus-black text-gray-200">
+        <div className="w-20 lg:w-64 bg-black/50 border-r border-white/10 flex flex-col shrink-0 z-30 backdrop-blur-md">
+             <div className="p-6 border-b border-white/5"><h1 className="font-black text-white text-lg">INSANUS</h1></div>
+             <nav className="p-4 space-y-2 flex-1">
+                 {plans.length > 1 && (
+                     <div className="mb-6 px-2">
+                         <label className="text-[10px] uppercase font-bold text-gray-500 mb-2 block">Plano Ativo</label>
+                         <select 
+                            value={currentPlan?.id || ''} 
+                            onChange={(e) => handleSelectPlan(e.target.value)}
+                            className="w-full bg-white/5 border border-white/10 rounded p-2 text-xs text-white outline-none"
+                         >
+                             {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                         </select>
+                     </div>
+                 )}
 
-    // --- Calculate Overall Progress ---
-    let totalSlots = 0;
-    let completedSlots = 0;
-    
-    selectedPlan.editalVerticalizado.forEach(disc => {
-        disc.topics.forEach(topic => {
-            // Check main slots
-            const slots = [topic.links.aula, topic.links.material, topic.links.questoes, topic.links.leiSeca, topic.links.resumo];
-            slots.forEach(s => {
-                if (s) {
-                    totalSlots++;
-                    if (isCompleted(s)) completedSlots++;
-                }
-            });
-            // Revisions (count as 4 slots if parent has revisions)
-            const parents = [topic.links.questoes, topic.links.resumo, topic.links.revisao].filter(Boolean);
-            if (parents.length > 0) {
-                 totalSlots += 4;
-                 for(let i=0; i<4; i++) {
-                     let done = false;
-                     parents.forEach(pid => {
-                         if (user.progress?.completedRevisionIds?.includes(`${pid}_rev_${i}`)) done = true;
-                         // Hack for explicit revision counting as Rev 1
-                         if (i === 0 && topic.links.revisao && isCompleted(topic.links.revisao)) done = true;
-                     });
-                     if(done) completedSlots++;
-                 }
-            }
-        });
-    });
+                 <button onClick={() => setView('daily')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'daily' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
+                     <Icon.Check className="w-5 h-5" />
+                     <span className="hidden lg:block font-bold text-sm">Metas de Hoje</span>
+                 </button>
+                 <button onClick={() => setView('calendar')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'calendar' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
+                     <Icon.Calendar className="w-5 h-5" />
+                     <span className="hidden lg:block font-bold text-sm">Calendário</span>
+                 </button>
+                 <button onClick={() => setView('edital')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'edital' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
+                     <Icon.List className="w-5 h-5" />
+                     <span className="hidden lg:block font-bold text-sm">Edital Verticalizado</span>
+                 </button>
+                 <button onClick={() => setView('simulados')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'simulados' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
+                     <Icon.FileText className="w-5 h-5" />
+                     <span className="hidden lg:block font-bold text-sm">Simulados</span>
+                 </button>
+                 <button onClick={() => setView('setup')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'setup' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
+                     <Icon.Clock className="w-5 h-5" />
+                     <span className="hidden lg:block font-bold text-sm">Configuração</span>
+                 </button>
+             </nav>
+             
+             {/* STATS AREA */}
+             <div className="p-4 border-t border-white/5 bg-black/20">
+                 <div className="text-[10px] text-gray-500 font-bold uppercase mb-1">Tempo Total Estudado</div>
+                 <div className="text-xl font-black text-white">{formatSecondsToTime(user.progress.totalStudySeconds)}</div>
+                 {currentPlan && user.progress.planStudySeconds?.[currentPlan.id] && (
+                     <div className="text-[9px] text-insanus-red mt-1 font-mono">
+                         Neste Plano: {formatSecondsToTime(user.progress.planStudySeconds[currentPlan.id])}
+                     </div>
+                 )}
+             </div>
 
-    const percent = totalSlots > 0 ? Math.round((completedSlots / totalSlots) * 100) : 0;
+             {(onReturnToAdmin || user.isAdmin) && (
+                 <div className="p-4 border-t border-white/5">
+                     <button onClick={onReturnToAdmin} className="w-full bg-gray-800 hover:bg-gray-700 text-white p-3 rounded-xl flex items-center justify-center lg:justify-start gap-3 transition-all border border-transparent hover:border-gray-600 shadow-lg group">
+                        <Icon.LogOut className="w-5 h-5 text-insanus-red group-hover:scale-110 transition-transform" />
+                        <span className="hidden lg:block font-bold text-sm uppercase">Voltar p/ Admin</span>
+                     </button>
+                 </div>
+             )}
+        </div>
 
-    return (
-        <div className="flex flex-col h-full bg-black/90 text-white overflow-hidden p-8">
-            {/* Header */}
-            <div className="mb-8 flex flex-col md:flex-row justify-between items-end gap-6 border-b border-white/10 pb-6">
-                <div>
-                    <h2 className="text-3xl font-black text-white uppercase tracking-tighter flex items-center gap-3">
-                         <Icon.List className="w-8 h-8 text-insanus-red" />
-                         EDITAL <span className="text-gray-500">VERTICALIZADO</span>
-                    </h2>
-                    <p className="text-gray-500 font-mono text-sm mt-1">Visão estratégica de cobertura do edital.</p>
+        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar relative">
+            {user.isAdmin && (
+                <div className="absolute top-4 right-4 bg-insanus-red/20 border border-insanus-red text-insanus-red px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest pointer-events-none z-10">
+                    Modo Admin
                 </div>
-                
-                <div className="w-full md:w-1/3">
-                    <div className="flex justify-between text-xs font-bold uppercase mb-2">
-                        <span>Progresso Global</span>
-                        <span className="text-insanus-red">{percent}%</span>
-                    </div>
-                    <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-insanus-red to-red-600 transition-all duration-1000 ease-out shadow-neon" style={{width: `${percent}%`}}></div>
-                    </div>
-                </div>
-            </div>
+            )}
 
-            {/* Content Table */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar pb-20">
-                <div className="space-y-8">
-                    {selectedPlan.editalVerticalizado.map(disc => (
-                        <div key={disc.id} className="glass border border-white/5 rounded-xl overflow-hidden">
-                            <div className="bg-white/5 p-4 font-black uppercase tracking-wider text-sm flex items-center gap-2">
-                                <div className="w-1.5 h-6 bg-insanus-red rounded"></div>
-                                {disc.name}
-                            </div>
-                            
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="border-b border-white/5 bg-black/40 text-[10px] font-bold text-gray-500 uppercase tracking-widest text-center">
-                                            <th className="p-3 text-left w-1/3">Tópico</th>
-                                            <th className="p-3 w-12">AULA</th>
-                                            <th className="p-3 w-12">PDF</th>
-                                            <th className="p-3 w-12">QUEST</th>
-                                            <th className="p-3 w-12">LEI</th>
-                                            <th className="p-3 w-12">RES</th>
-                                            <th className="p-3 w-24">REVISÕES</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-white/5">
-                                        {disc.topics.map(topic => {
-                                            // Check Row Completion
-                                            // A topic is done if all linked slots are done + 2 revision cycles (indices 0 and 1)
-                                            // This is a simplified logic for "Check Row" visual
-                                            let isRowDone = true;
-                                            if (topic.links.aula && !isCompleted(topic.links.aula)) isRowDone = false;
-                                            if (topic.links.material && !isCompleted(topic.links.material)) isRowDone = false;
-                                            if (topic.links.questoes && !isCompleted(topic.links.questoes)) isRowDone = false;
-                                            
-                                            // Revisions Check (Rev 1 & 2 mandatory for row completion based on prompt)
-                                            const parents = [topic.links.questoes, topic.links.resumo].filter(Boolean);
-                                            if (parents.length > 0) {
-                                                let r1 = false, r2 = false;
-                                                parents.forEach(pid => {
-                                                    if(user.progress?.completedRevisionIds?.includes(`${pid}_rev_0`)) r1 = true;
-                                                    if(user.progress?.completedRevisionIds?.includes(`${pid}_rev_1`)) r2 = true;
-                                                });
-                                                if(!r1 || !r2) isRowDone = false;
-                                            }
-
-                                            return (
-                                                <tr key={topic.id} className="hover:bg-white/5 transition-colors group">
-                                                    <td className="p-4 text-sm font-bold text-gray-300 group-hover:text-white flex flex-col justify-center">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${isRowDone ? 'bg-green-500 border-green-500 text-black' : 'border-gray-600'}`}>
-                                                                {isRowDone && <Icon.Check className="w-3 h-3" />}
-                                                            </div>
-                                                            {topic.name}
-                                                        </div>
-                                                        {/* CONTEST BADGES */}
-                                                        {topic.relatedContests && topic.relatedContests.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1 mt-1 pl-7">
-                                                                {topic.relatedContests.map(c => (
-                                                                    <span key={c} className="text-[9px] bg-insanus-red/10 text-insanus-red px-1.5 py-0.5 rounded border border-insanus-red/30 font-bold uppercase tracking-wider">
-                                                                        {c}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </td>
-                                                    <td className="p-2">{renderCell(topic.links.aula, 'AULA')}</td>
-                                                    <td className="p-2">{renderCell(topic.links.material, 'PDF')}</td>
-                                                    <td className="p-2">{renderCell(topic.links.questoes, 'QST')}</td>
-                                                    <td className="p-2">{renderCell(topic.links.leiSeca, 'LEI')}</td>
-                                                    <td className="p-2">{renderCell(topic.links.resumo, 'RES')}</td>
-                                                    <td className="p-2 text-center">{renderRevisionsCell(topic.links)}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
+            {view === 'setup' && <SetupWizard user={user} currentPlan={currentPlan} onSave={handleSetupSave} onPlanAction={handlePlanAction} />}
+            {view === 'daily' && renderDailyView()}
+            {view === 'calendar' && renderCalendarView()}
+            {view === 'edital' && renderEditalView()}
+            {view === 'simulados' && (
+                <div className="max-w-6xl mx-auto space-y-10 animate-fade-in">
+                    <h2 className="text-3xl font-black text-white mb-8 border-b border-white/10 pb-4">SIMULADOS</h2>
+                    {simuladoClasses.map(sc => (
+                        <div key={sc.id} className="glass rounded-xl p-6 border border-white/5">
+                            <h3 className="text-xl font-black text-white mb-4">{sc.name}</h3>
+                            <div className="grid gap-4">
+                                {sc.simulados.map(sim => (
+                                    <div key={sim.id} className="bg-black/40 p-4 rounded-lg flex justify-between items-center border border-white/5">
+                                        <h4 className="font-bold text-white">{sim.title}</h4>
+                                        <button onClick={() => setActiveSimulado(sim)} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">ACESSAR</button>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     ))}
                 </div>
-            </div>
+            )}
         </div>
-    );
-  }
+    </div>
+  );
+};
