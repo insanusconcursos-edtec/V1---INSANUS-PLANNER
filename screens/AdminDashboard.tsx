@@ -145,18 +145,27 @@ const EditalTopicEditor: React.FC<EditalTopicEditorProps> = ({ topic, plan, onUp
 interface CycleEditorProps {
     cycle: Cycle;
     allDisciplines: Discipline[];
+    allFolders: Folder[];
     onUpdate: (c: Cycle) => void;
     onDelete: () => void;
 }
 
-const CycleEditor: React.FC<CycleEditorProps> = ({ cycle, allDisciplines, onUpdate, onDelete }) => {
-    const [selectedDiscId, setSelectedDiscId] = useState('');
+const CycleEditor: React.FC<CycleEditorProps> = ({ cycle, allDisciplines, allFolders, onUpdate, onDelete }) => {
+    const [selectedId, setSelectedId] = useState(''); // Value format: "DISC:id" or "FOLDER:id"
 
     const addItem = () => {
-        if (!selectedDiscId) return;
-        const newItem: CycleItem = { disciplineId: selectedDiscId, subjectsCount: 1 };
+        if (!selectedId) return;
+        const [type, id] = selectedId.split(':');
+        
+        let newItem: CycleItem;
+        if (type === 'FOLDER') {
+            newItem = { folderId: id, subjectsCount: 1 };
+        } else {
+            newItem = { disciplineId: id, subjectsCount: 1 };
+        }
+        
         onUpdate({ ...cycle, items: [...cycle.items, newItem] });
-        setSelectedDiscId('');
+        setSelectedId('');
     };
 
     const updateItem = (index: number, field: keyof CycleItem, value: any) => {
@@ -169,6 +178,15 @@ const CycleEditor: React.FC<CycleEditorProps> = ({ cycle, allDisciplines, onUpda
         const newItems = cycle.items.filter((_, i) => i !== index);
         onUpdate({ ...cycle, items: newItems });
     };
+
+    const getItemName = (item: CycleItem) => {
+        if (item.folderId) {
+            const f = allFolders.find(f => f.id === item.folderId);
+            return f ? `PASTA: ${f.name}` : 'Pasta Removida';
+        }
+        const d = allDisciplines.find(d => d.id === item.disciplineId);
+        return d ? d.name : 'Disciplina Removida';
+    }
 
     return (
         <div className="glass rounded-xl border border-white/5 overflow-hidden mb-6">
@@ -190,13 +208,17 @@ const CycleEditor: React.FC<CycleEditorProps> = ({ cycle, allDisciplines, onUpda
             <div className="p-4">
                 <div className="space-y-2 mb-4">
                     {cycle.items.map((item, idx) => {
-                        const discName = allDisciplines.find(d => d.id === item.disciplineId)?.name || 'Disciplina Removida';
+                        const name = getItemName(item);
+                        const isFolder = !!item.folderId;
                         return (
-                            <div key={idx} className="flex items-center gap-4 bg-black/30 p-2 rounded border border-white/5">
+                            <div key={idx} className={`flex items-center gap-4 p-2 rounded border border-white/5 ${isFolder ? 'bg-insanus-red/10 border-insanus-red/30' : 'bg-black/30'}`}>
                                 <div className="text-gray-500 font-mono text-xs w-6 text-center">{idx + 1}.</div>
-                                <div className="flex-1 text-sm font-bold text-gray-200">{discName}</div>
+                                <div className="flex-1 flex items-center gap-2 text-sm font-bold text-gray-200">
+                                    {isFolder && <Icon.Folder className="w-4 h-4 text-insanus-red" />}
+                                    {name}
+                                </div>
                                 <div className="flex items-center gap-2 bg-black/50 rounded px-2 py-1 border border-white/5">
-                                    <span className="text-[10px] text-gray-500 uppercase">Qtd. Metas:</span>
+                                    <span className="text-[10px] text-gray-500 uppercase">Qtd. Metas{isFolder ? '/Disc' : ''}:</span>
                                     <input 
                                         type="number" 
                                         min="1"
@@ -212,14 +234,19 @@ const CycleEditor: React.FC<CycleEditorProps> = ({ cycle, allDisciplines, onUpda
                 </div>
                 <div className="flex gap-2 pt-2 border-t border-white/5">
                     <select 
-                        value={selectedDiscId}
-                        onChange={(e) => setSelectedDiscId(e.target.value)}
+                        value={selectedId}
+                        onChange={(e) => setSelectedId(e.target.value)}
                         className="flex-1 bg-white/5 text-gray-300 text-xs rounded p-2 outline-none"
                     >
-                        <option value="">Selecione uma disciplina...</option>
-                        {allDisciplines.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                        <option value="">Adicionar ao ciclo...</option>
+                        <optgroup label="Pastas (Inclui todas as disciplinas)">
+                            {allFolders.map(f => <option key={f.id} value={`FOLDER:${f.id}`}>{f.name}</option>)}
+                        </optgroup>
+                        <optgroup label="Disciplinas Individuais">
+                            {allDisciplines.map(d => <option key={d.id} value={`DISC:${d.id}`}>{d.name}</option>)}
+                        </optgroup>
                     </select>
-                    <button onClick={addItem} disabled={!selectedDiscId} className="bg-insanus-red/20 text-insanus-red hover:bg-insanus-red hover:text-white px-4 py-2 rounded text-xs font-bold transition-all">ADICIONAR</button>
+                    <button onClick={addItem} disabled={!selectedId} className="bg-insanus-red/20 text-insanus-red hover:bg-insanus-red hover:text-white px-4 py-2 rounded text-xs font-bold transition-all">ADICIONAR</button>
                 </div>
             </div>
         </div>
@@ -349,6 +376,199 @@ const GoalEditor: React.FC<GoalEditorProps> = ({ goal, onUpdate, onDelete }) => 
                     )}
                 </div>
             )}
+        </div>
+    );
+};
+
+// --- SIMULADO EDITOR COMPONENT ---
+interface SimuladoEditorProps {
+    simClass: SimuladoClass;
+    onUpdate: (sc: SimuladoClass) => void;
+    onBack: () => void;
+}
+
+const SimuladoEditor: React.FC<SimuladoEditorProps> = ({ simClass, onUpdate, onBack }) => {
+    const [selectedSimulado, setSelectedSimulado] = useState<Simulado | null>(null);
+    const [uploading, setUploading] = useState(false);
+
+    const addSimulado = () => {
+        const newSim: Simulado = {
+            id: uuid(), title: "Novo Simulado", type: "MULTIPLA_ESCOLHA", optionsCount: 5, totalQuestions: 10,
+            hasPenalty: false, hasBlocks: false, blocks: [], correctAnswers: {}, questionValues: {}, hasDiagnosis: false, diagnosisMap: {}
+        };
+        onUpdate({ ...simClass, simulados: [...simClass.simulados, newSim] });
+        setSelectedSimulado(newSim);
+    };
+
+    const updateSimulado = (sim: Simulado) => {
+        const updatedList = simClass.simulados.map(s => s.id === sim.id ? sim : s);
+        onUpdate({ ...simClass, simulados: updatedList });
+        setSelectedSimulado(sim);
+    };
+
+    const deleteSimulado = (id: string) => {
+        if (!confirm("Excluir simulado?")) return;
+        const updatedList = simClass.simulados.filter(s => s.id !== id);
+        onUpdate({ ...simClass, simulados: updatedList });
+        setSelectedSimulado(null);
+    };
+
+    const handleFile = async (e: React.ChangeEvent<HTMLInputElement>, sim: Simulado, field: 'pdfUrl' | 'gabaritoPdfUrl') => {
+        if (!e.target.files || !e.target.files[0]) return;
+        setUploading(true);
+        try {
+            const url = await uploadFileToStorage(e.target.files[0], 'simulados');
+            updateSimulado({ ...sim, [field]: url });
+        } catch(err) { alert("Erro upload"); }
+        finally { setUploading(false); }
+    }
+
+    if (selectedSimulado) {
+        const s = selectedSimulado;
+        return (
+            <div className="flex flex-col h-full bg-black/40">
+                <div className="flex items-center gap-4 border-b border-white/10 p-4 bg-black/60">
+                    <button onClick={() => setSelectedSimulado(null)} className="text-gray-400 hover:text-white"><Icon.ArrowUp className="-rotate-90 w-6 h-6"/></button>
+                    <span className="font-bold text-white uppercase">{s.title}</span>
+                </div>
+                
+                <div className="p-6 overflow-y-auto custom-scrollbar space-y-8">
+                    <div className="grid grid-cols-2 gap-6">
+                        <div>
+                            <label className="text-[10px] text-gray-500 uppercase font-bold">Título</label>
+                            <input value={s.title} onChange={e => updateSimulado({...s, title: e.target.value})} className="w-full bg-black border border-white/10 p-2 rounded text-white"/>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-[10px] text-gray-500 uppercase font-bold">Tipo</label>
+                                <select value={s.type} onChange={e => updateSimulado({...s, type: e.target.value as any})} className="w-full bg-black border border-white/10 p-2 rounded text-white">
+                                    <option value="MULTIPLA_ESCOLHA">Múltipla Escolha</option>
+                                    <option value="CERTO_ERRADO">Certo / Errado</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[10px] text-gray-500 uppercase font-bold">Qtd. Questões</label>
+                                <input type="number" value={s.totalQuestions} onChange={e => updateSimulado({...s, totalQuestions: Number(e.target.value)})} className="w-full bg-black border border-white/10 p-2 rounded text-white"/>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Caderno de Questões (PDF)</label>
+                            <input type="file" onChange={e => handleFile(e, s, 'pdfUrl')} className="text-xs text-gray-400"/>
+                            {s.pdfUrl && <span className="text-xs text-green-500 ml-2">Anexado</span>}
+                        </div>
+                        <div>
+                            <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Gabarito Comentado (PDF)</label>
+                            <input type="file" onChange={e => handleFile(e, s, 'gabaritoPdfUrl')} className="text-xs text-gray-400"/>
+                            {s.gabaritoPdfUrl && <span className="text-xs text-green-500 ml-2">Anexado</span>}
+                        </div>
+                        <div className="col-span-2 flex gap-6">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" checked={s.hasPenalty} onChange={e => updateSimulado({...s, hasPenalty: e.target.checked})} className="accent-insanus-red"/>
+                                <span className="text-xs font-bold text-white">Sistema de Penalidade (1 Errada anula 1 Certa)</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" checked={s.hasDiagnosis} onChange={e => updateSimulado({...s, hasDiagnosis: e.target.checked})} className="accent-insanus-red"/>
+                                <span className="text-xs font-bold text-white">Ativar Autodiagnóstico</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                        <div className="flex justify-between items-center mb-2">
+                            <h4 className="text-sm font-bold text-white">Divisão de Blocos</h4>
+                            <button onClick={() => updateSimulado({...s, hasBlocks: !s.hasBlocks})} className={`text-[10px] px-2 py-1 rounded ${s.hasBlocks ? 'bg-insanus-red text-white' : 'bg-gray-700 text-gray-400'}`}>{s.hasBlocks ? 'ATIVADO' : 'DESATIVADO'}</button>
+                        </div>
+                        {s.hasBlocks && (
+                            <div className="space-y-2">
+                                {s.blocks.map((b, idx) => (
+                                    <div key={idx} className="flex gap-2">
+                                        <input value={b.name} onChange={e => { const nb = [...s.blocks]; nb[idx].name = e.target.value; updateSimulado({...s, blocks: nb}); }} placeholder="Nome Bloco" className="bg-black p-1 text-xs text-white border border-white/10 rounded"/>
+                                        <input type="number" value={b.questionCount} onChange={e => { const nb = [...s.blocks]; nb[idx].questionCount = Number(e.target.value); updateSimulado({...s, blocks: nb}); }} placeholder="Qtd" className="w-16 bg-black p-1 text-xs text-white border border-white/10 rounded"/>
+                                        <input type="number" value={b.minCorrect} onChange={e => { const nb = [...s.blocks]; nb[idx].minCorrect = Number(e.target.value); updateSimulado({...s, blocks: nb}); }} placeholder="Mín. Acertos" className="w-20 bg-black p-1 text-xs text-white border border-white/10 rounded"/>
+                                        <button onClick={() => { const nb = s.blocks.filter((_, i) => i !== idx); updateSimulado({...s, blocks: nb}); }} className="text-red-500"><Icon.Trash className="w-4 h-4"/></button>
+                                    </div>
+                                ))}
+                                <button onClick={() => updateSimulado({...s, blocks: [...s.blocks, {id: uuid(), name: `Bloco ${s.blocks.length+1}`, questionCount: 10}]})} className="text-xs text-insanus-red hover:underline">+ Adicionar Bloco</button>
+                            </div>
+                        )}
+                        <div className="mt-4 pt-2 border-t border-white/10">
+                            <label className="text-[10px] text-gray-500 font-bold uppercase">Mínimo % Geral para Aprovação</label>
+                            <input type="number" value={s.minTotalPercent || 0} onChange={e => updateSimulado({...s, minTotalPercent: Number(e.target.value)})} className="ml-2 w-16 bg-black p-1 text-xs text-white border border-white/10 rounded"/> <span className="text-xs">%</span>
+                        </div>
+                    </div>
+
+                    <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                        <h4 className="text-sm font-bold text-white mb-4">Gabarito e Configuração das Questões</h4>
+                        <div className="grid grid-cols-1 gap-2">
+                            {Array.from({length: s.totalQuestions}).map((_, i) => {
+                                const qNum = i + 1;
+                                const diag = s.diagnosisMap[qNum] || { discipline: '', topic: '' };
+                                const ans = s.correctAnswers[qNum] || '';
+                                const val = s.questionValues[qNum] || 1;
+                                return (
+                                    <div key={qNum} className="flex flex-wrap items-center gap-2 bg-black/40 p-2 rounded border border-white/5 hover:border-white/20">
+                                        <div className="w-8 h-8 flex items-center justify-center bg-white/10 rounded font-bold text-xs">{qNum}</div>
+                                        <div className="flex flex-col">
+                                            <label className="text-[8px] uppercase text-gray-500">Resp.</label>
+                                            <input value={ans} onChange={e => updateSimulado({ ...s, correctAnswers: {...s.correctAnswers, [qNum]: e.target.value.toUpperCase()} })} className="w-10 bg-black text-center text-xs font-bold text-insanus-red p-1 rounded border border-white/10" maxLength={1} />
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <label className="text-[8px] uppercase text-gray-500">Pontos</label>
+                                            <input type="number" value={val} onChange={e => updateSimulado({ ...s, questionValues: {...s.questionValues, [qNum]: Number(e.target.value)} })} className="w-12 bg-black text-center text-xs p-1 rounded border border-white/10" />
+                                        </div>
+                                        {s.hasDiagnosis && (
+                                            <>
+                                                <div className="flex flex-col flex-1 min-w-[100px]">
+                                                    <label className="text-[8px] uppercase text-gray-500">Disciplina</label>
+                                                    <input value={diag.discipline} onChange={e => updateSimulado({ ...s, diagnosisMap: {...s.diagnosisMap, [qNum]: {...diag, discipline: e.target.value}} })} className="bg-black text-xs p-1 rounded border border-white/10 w-full" placeholder="Ex: Direito Const." />
+                                                </div>
+                                                <div className="flex flex-col flex-1 min-w-[100px]">
+                                                    <label className="text-[8px] uppercase text-gray-500">Assunto/Tópico</label>
+                                                    <input value={diag.topic} onChange={e => updateSimulado({ ...s, diagnosisMap: {...s.diagnosisMap, [qNum]: {...diag, topic: e.target.value}} })} className="bg-black text-xs p-1 rounded border border-white/10 w-full" placeholder="Ex: Direitos Fund." />
+                                                </div>
+                                                <div className="flex flex-col flex-1 min-w-[100px]">
+                                                    <label className="text-[8px] uppercase text-gray-500">Obs (Opcional)</label>
+                                                    <input value={diag.observation || ''} onChange={e => updateSimulado({ ...s, diagnosisMap: {...s.diagnosisMap, [qNum]: {...diag, observation: e.target.value}} })} className="bg-black text-xs p-1 rounded border border-white/10 w-full" placeholder="Comentário..." />
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex flex-col h-full bg-black/80">
+            <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 shrink-0 bg-black">
+                <div className="flex items-center gap-4">
+                    <button onClick={onBack} className="text-gray-500 hover:text-white"><Icon.ArrowUp className="-rotate-90 w-6 h-6" /></button>
+                    <input value={simClass.name} onChange={e => onUpdate({...simClass, name: e.target.value})} className="bg-transparent font-black text-white text-xl focus:outline-none" />
+                </div>
+                <button onClick={addSimulado} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">+ NOVO SIMULADO</button>
+            </div>
+            <div className="flex-1 p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto custom-scrollbar">
+                {simClass.simulados.map(sim => (
+                    <div key={sim.id} className="glass border border-white/5 rounded-xl p-4 flex flex-col justify-between hover:border-insanus-red transition group">
+                        <div>
+                            <h3 className="font-bold text-white text-lg mb-2">{sim.title}</h3>
+                            <div className="text-xs text-gray-500 space-y-1">
+                                <p>• {sim.totalQuestions} Questões ({sim.type === 'MULTIPLA_ESCOLHA' ? 'Múltipla' : 'C/E'})</p>
+                                <p>• Penalidade: {sim.hasPenalty ? 'Sim' : 'Não'}</p>
+                                <p>• Autodiagnóstico: {sim.hasDiagnosis ? 'Ativado' : 'Desativado'}</p>
+                            </div>
+                        </div>
+                        <div className="flex gap-2 mt-4">
+                            <button onClick={() => setSelectedSimulado(sim)} className="flex-1 bg-white/10 hover:bg-white/20 text-white py-2 rounded text-xs font-bold">EDITAR</button>
+                            <button onClick={() => deleteSimulado(sim.id)} className="bg-red-500/20 hover:bg-red-500 text-red-500 hover:text-white p-2 rounded"><Icon.Trash className="w-4 h-4"/></button>
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 };
@@ -575,7 +795,7 @@ const PlanDetailEditor: React.FC<PlanDetailEditorProps> = ({ plan, onUpdate, onB
                 </div>
 
                 {tab === 'struct' && (
-                    <div className="max-w-6xl mx-auto space-y-12">
+                    <div className="max-w-[1600px] w-full mx-auto space-y-12">
                          <div className="glass rounded-xl border border-white/10 overflow-hidden">
                             <div className="bg-gradient-to-r from-gray-900 to-black p-4 flex justify-between items-center border-b border-white/10">
                                 <div className="flex items-center gap-3"><Icon.BookOpen className="w-5 h-5 text-gray-400" /><span className="font-black text-gray-200 uppercase tracking-widest text-sm">Disciplinas Gerais (Sem Pasta)</span></div>
@@ -617,19 +837,19 @@ const PlanDetailEditor: React.FC<PlanDetailEditorProps> = ({ plan, onUpdate, onB
                 )}
                 
                 {tab === 'cycles' && (
-                    <div className="max-w-4xl mx-auto">
+                    <div className="max-w-[1200px] mx-auto">
                         <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
                             <div><h3 className="text-2xl font-black text-white uppercase">Gestão de Ciclos</h3><p className="text-gray-500 text-xs">Crie sequências de estudo rotativas.</p></div>
                             <button onClick={addCycle} className="bg-insanus-red hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-2"><Icon.Plus className="w-4 h-4" /> NOVO CICLO</button>
                         </div>
                         {plan.cycles.length === 0 ? (
                              <div className="flex flex-col items-center justify-center h-64 text-gray-500 border border-dashed border-white/10 rounded-2xl"><Icon.RefreshCw className="w-12 h-12 mb-4 opacity-50"/><p>Nenhum ciclo criado.</p><button onClick={addCycle} className="mt-4 text-insanus-red hover:underline text-sm font-bold">Criar Primeiro Ciclo</button></div>
-                        ) : ( <div>{plan.cycles.map(cycle => ( <CycleEditor key={cycle.id} cycle={cycle} allDisciplines={plan.disciplines} onUpdate={updateCycle} onDelete={() => deleteCycle(cycle.id)} /> ))}</div> )}
+                        ) : ( <div>{plan.cycles.map(cycle => ( <CycleEditor key={cycle.id} cycle={cycle} allDisciplines={plan.disciplines} allFolders={plan.folders} onUpdate={updateCycle} onDelete={() => deleteCycle(cycle.id)} /> ))}</div> )}
                     </div>
                 )}
 
                 {tab === 'edital' && (
-                    <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
+                    <div className="max-w-[1600px] w-full mx-auto space-y-8 animate-fade-in">
                         <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
                             <div><h3 className="text-2xl font-black text-white uppercase">Edital Verticalizado</h3><p className="text-gray-500 text-xs">Organize os tópicos e vincule as metas.</p></div>
                             <button onClick={addEditalDiscipline} className="bg-insanus-red hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-2"><Icon.Plus className="w-4 h-4" /> NOVA DISCIPLINA DO EDITAL</button>
@@ -664,199 +884,6 @@ const PlanDetailEditor: React.FC<PlanDetailEditorProps> = ({ plan, onUpdate, onB
                         )}
                     </div>
                 )}
-            </div>
-        </div>
-    );
-};
-
-// --- SIMULADO EDITOR COMPONENT ---
-interface SimuladoEditorProps {
-    simClass: SimuladoClass;
-    onUpdate: (sc: SimuladoClass) => void;
-    onBack: () => void;
-}
-
-const SimuladoEditor: React.FC<SimuladoEditorProps> = ({ simClass, onUpdate, onBack }) => {
-    const [selectedSimulado, setSelectedSimulado] = useState<Simulado | null>(null);
-    const [uploading, setUploading] = useState(false);
-
-    const addSimulado = () => {
-        const newSim: Simulado = {
-            id: uuid(), title: "Novo Simulado", type: "MULTIPLA_ESCOLHA", optionsCount: 5, totalQuestions: 10,
-            hasPenalty: false, hasBlocks: false, blocks: [], correctAnswers: {}, questionValues: {}, hasDiagnosis: false, diagnosisMap: {}
-        };
-        onUpdate({ ...simClass, simulados: [...simClass.simulados, newSim] });
-        setSelectedSimulado(newSim);
-    };
-
-    const updateSimulado = (sim: Simulado) => {
-        const updatedList = simClass.simulados.map(s => s.id === sim.id ? sim : s);
-        onUpdate({ ...simClass, simulados: updatedList });
-        setSelectedSimulado(sim);
-    };
-
-    const deleteSimulado = (id: string) => {
-        if (!confirm("Excluir simulado?")) return;
-        const updatedList = simClass.simulados.filter(s => s.id !== id);
-        onUpdate({ ...simClass, simulados: updatedList });
-        setSelectedSimulado(null);
-    };
-
-    const handleFile = async (e: React.ChangeEvent<HTMLInputElement>, sim: Simulado, field: 'pdfUrl' | 'gabaritoPdfUrl') => {
-        if (!e.target.files || !e.target.files[0]) return;
-        setUploading(true);
-        try {
-            const url = await uploadFileToStorage(e.target.files[0], 'simulados');
-            updateSimulado({ ...sim, [field]: url });
-        } catch(err) { alert("Erro upload"); }
-        finally { setUploading(false); }
-    }
-
-    if (selectedSimulado) {
-        const s = selectedSimulado;
-        return (
-            <div className="flex flex-col h-full bg-black/40">
-                <div className="flex items-center gap-4 border-b border-white/10 p-4">
-                    <button onClick={() => setSelectedSimulado(null)} className="text-gray-400 hover:text-white"><Icon.ArrowUp className="-rotate-90 w-6 h-6"/></button>
-                    <span className="font-bold text-white uppercase">{s.title}</span>
-                </div>
-                
-                <div className="p-6 overflow-y-auto custom-scrollbar space-y-8">
-                    <div className="grid grid-cols-2 gap-6">
-                        <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-bold">Título</label>
-                            <input value={s.title} onChange={e => updateSimulado({...s, title: e.target.value})} className="w-full bg-black border border-white/10 p-2 rounded text-white"/>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="text-[10px] text-gray-500 uppercase font-bold">Tipo</label>
-                                <select value={s.type} onChange={e => updateSimulado({...s, type: e.target.value as any})} className="w-full bg-black border border-white/10 p-2 rounded text-white">
-                                    <option value="MULTIPLA_ESCOLHA">Múltipla Escolha</option>
-                                    <option value="CERTO_ERRADO">Certo / Errado</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-[10px] text-gray-500 uppercase font-bold">Qtd. Questões</label>
-                                <input type="number" value={s.totalQuestions} onChange={e => updateSimulado({...s, totalQuestions: Number(e.target.value)})} className="w-full bg-black border border-white/10 p-2 rounded text-white"/>
-                            </div>
-                        </div>
-                        <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Caderno de Questões (PDF)</label>
-                            <input type="file" onChange={e => handleFile(e, s, 'pdfUrl')} className="text-xs text-gray-400"/>
-                            {s.pdfUrl && <span className="text-xs text-green-500 ml-2">Anexado</span>}
-                        </div>
-                        <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Gabarito Comentado (PDF)</label>
-                            <input type="file" onChange={e => handleFile(e, s, 'gabaritoPdfUrl')} className="text-xs text-gray-400"/>
-                            {s.gabaritoPdfUrl && <span className="text-xs text-green-500 ml-2">Anexado</span>}
-                        </div>
-                        <div className="col-span-2 flex gap-6">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" checked={s.hasPenalty} onChange={e => updateSimulado({...s, hasPenalty: e.target.checked})} className="accent-insanus-red"/>
-                                <span className="text-xs font-bold text-white">Sistema de Penalidade (1 Errada anula 1 Certa)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" checked={s.hasDiagnosis} onChange={e => updateSimulado({...s, hasDiagnosis: e.target.checked})} className="accent-insanus-red"/>
-                                <span className="text-xs font-bold text-white">Ativar Autodiagnóstico</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                        <div className="flex justify-between items-center mb-2">
-                            <h4 className="text-sm font-bold text-white">Divisão de Blocos</h4>
-                            <button onClick={() => updateSimulado({...s, hasBlocks: !s.hasBlocks})} className={`text-[10px] px-2 py-1 rounded ${s.hasBlocks ? 'bg-insanus-red text-white' : 'bg-gray-700 text-gray-400'}`}>{s.hasBlocks ? 'ATIVADO' : 'DESATIVADO'}</button>
-                        </div>
-                        {s.hasBlocks && (
-                            <div className="space-y-2">
-                                {s.blocks.map((b, idx) => (
-                                    <div key={idx} className="flex gap-2">
-                                        <input value={b.name} onChange={e => { const nb = [...s.blocks]; nb[idx].name = e.target.value; updateSimulado({...s, blocks: nb}); }} placeholder="Nome Bloco" className="bg-black p-1 text-xs text-white border border-white/10 rounded"/>
-                                        <input type="number" value={b.questionCount} onChange={e => { const nb = [...s.blocks]; nb[idx].questionCount = Number(e.target.value); updateSimulado({...s, blocks: nb}); }} placeholder="Qtd" className="w-16 bg-black p-1 text-xs text-white border border-white/10 rounded"/>
-                                        <input type="number" value={b.minCorrect} onChange={e => { const nb = [...s.blocks]; nb[idx].minCorrect = Number(e.target.value); updateSimulado({...s, blocks: nb}); }} placeholder="Mín. Acertos" className="w-20 bg-black p-1 text-xs text-white border border-white/10 rounded"/>
-                                        <button onClick={() => { const nb = s.blocks.filter((_, i) => i !== idx); updateSimulado({...s, blocks: nb}); }} className="text-red-500"><Icon.Trash className="w-4 h-4"/></button>
-                                    </div>
-                                ))}
-                                <button onClick={() => updateSimulado({...s, blocks: [...s.blocks, {id: uuid(), name: `Bloco ${s.blocks.length+1}`, questionCount: 10}]})} className="text-xs text-insanus-red hover:underline">+ Adicionar Bloco</button>
-                            </div>
-                        )}
-                        <div className="mt-4 pt-2 border-t border-white/10">
-                            <label className="text-[10px] text-gray-500 font-bold uppercase">Mínimo % Geral para Aprovação</label>
-                            <input type="number" value={s.minTotalPercent || 0} onChange={e => updateSimulado({...s, minTotalPercent: Number(e.target.value)})} className="ml-2 w-16 bg-black p-1 text-xs text-white border border-white/10 rounded"/> <span className="text-xs">%</span>
-                        </div>
-                    </div>
-
-                    <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                        <h4 className="text-sm font-bold text-white mb-4">Gabarito e Configuração das Questões</h4>
-                        <div className="grid grid-cols-1 gap-2">
-                            {Array.from({length: s.totalQuestions}).map((_, i) => {
-                                const qNum = i + 1;
-                                const diag = s.diagnosisMap[qNum] || { discipline: '', topic: '' };
-                                const ans = s.correctAnswers[qNum] || '';
-                                const val = s.questionValues[qNum] || 1;
-                                return (
-                                    <div key={qNum} className="flex flex-wrap items-center gap-2 bg-black/40 p-2 rounded border border-white/5 hover:border-white/20">
-                                        <div className="w-8 h-8 flex items-center justify-center bg-white/10 rounded font-bold text-xs">{qNum}</div>
-                                        <div className="flex flex-col">
-                                            <label className="text-[8px] uppercase text-gray-500">Resp.</label>
-                                            <input value={ans} onChange={e => updateSimulado({ ...s, correctAnswers: {...s.correctAnswers, [qNum]: e.target.value.toUpperCase()} })} className="w-10 bg-black text-center text-xs font-bold text-insanus-red p-1 rounded border border-white/10" maxLength={1} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-[8px] uppercase text-gray-500">Pontos</label>
-                                            <input type="number" value={val} onChange={e => updateSimulado({ ...s, questionValues: {...s.questionValues, [qNum]: Number(e.target.value)} })} className="w-12 bg-black text-center text-xs p-1 rounded border border-white/10" />
-                                        </div>
-                                        {s.hasDiagnosis && (
-                                            <>
-                                                <div className="flex flex-col flex-1 min-w-[100px]">
-                                                    <label className="text-[8px] uppercase text-gray-500">Disciplina</label>
-                                                    <input value={diag.discipline} onChange={e => updateSimulado({ ...s, diagnosisMap: {...s.diagnosisMap, [qNum]: {...diag, discipline: e.target.value}} })} className="bg-black text-xs p-1 rounded border border-white/10 w-full" placeholder="Ex: Direito Const." />
-                                                </div>
-                                                <div className="flex flex-col flex-1 min-w-[100px]">
-                                                    <label className="text-[8px] uppercase text-gray-500">Assunto/Tópico</label>
-                                                    <input value={diag.topic} onChange={e => updateSimulado({ ...s, diagnosisMap: {...s.diagnosisMap, [qNum]: {...diag, topic: e.target.value}} })} className="bg-black text-xs p-1 rounded border border-white/10 w-full" placeholder="Ex: Direitos Fund." />
-                                                </div>
-                                                <div className="flex flex-col flex-1 min-w-[100px]">
-                                                    <label className="text-[8px] uppercase text-gray-500">Obs (Opcional)</label>
-                                                    <input value={diag.observation || ''} onChange={e => updateSimulado({ ...s, diagnosisMap: {...s.diagnosisMap, [qNum]: {...diag, observation: e.target.value}} })} className="bg-black text-xs p-1 rounded border border-white/10 w-full" placeholder="Comentário..." />
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
-                                )
-                            })}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    return (
-        <div className="flex flex-col h-full bg-black/80">
-            <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 shrink-0 bg-black">
-                <div className="flex items-center gap-4">
-                    <button onClick={onBack} className="text-gray-500 hover:text-white"><Icon.ArrowUp className="-rotate-90 w-6 h-6" /></button>
-                    <input value={simClass.name} onChange={e => onUpdate({...simClass, name: e.target.value})} className="bg-transparent font-black text-white text-xl focus:outline-none" />
-                </div>
-                <button onClick={addSimulado} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">+ NOVO SIMULADO</button>
-            </div>
-            <div className="flex-1 p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto">
-                {simClass.simulados.map(sim => (
-                    <div key={sim.id} className="glass border border-white/5 rounded-xl p-4 flex flex-col justify-between hover:border-insanus-red transition group">
-                        <div>
-                            <h3 className="font-bold text-white text-lg mb-2">{sim.title}</h3>
-                            <div className="text-xs text-gray-500 space-y-1">
-                                <p>• {sim.totalQuestions} Questões ({sim.type === 'MULTIPLA_ESCOLHA' ? 'Múltipla' : 'C/E'})</p>
-                                <p>• Penalidade: {sim.hasPenalty ? 'Sim' : 'Não'}</p>
-                                <p>• Autodiagnóstico: {sim.hasDiagnosis ? 'Ativado' : 'Desativado'}</p>
-                            </div>
-                        </div>
-                        <div className="flex gap-2 mt-4">
-                            <button onClick={() => setSelectedSimulado(sim)} className="flex-1 bg-white/10 hover:bg-white/20 text-white py-2 rounded text-xs font-bold">EDITAR</button>
-                            <button onClick={() => deleteSimulado(sim.id)} className="bg-red-500/20 hover:bg-red-500 text-red-500 hover:text-white p-2 rounded"><Icon.Trash className="w-4 h-4"/></button>
-                        </div>
-                    </div>
-                ))}
             </div>
         </div>
     );
@@ -1109,7 +1136,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onSwitchTo
                 ) : (
                     <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
                         {view === 'users' && (
-                            <div className="max-w-6xl mx-auto w-full animate-fade-in">
+                            <div className="max-w-[95%] w-full mx-auto animate-fade-in">
                                 <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4"><h2 className="text-3xl font-black text-white">ALUNOS</h2><button onClick={() => setShowUserModal(true)} className="bg-insanus-red px-4 py-2 rounded text-white font-bold">+ NOVO ALUNO</button></div>
                                 <div className="grid gap-4">
                                     {users.filter(u => !u.isAdmin).map(u => (
@@ -1128,9 +1155,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onSwitchTo
                             </div>
                         )}
                         {view === 'simulados' && (
-                            <div className="max-w-6xl mx-auto w-full animate-fade-in">
+                            <div className="max-w-[95%] w-full mx-auto animate-fade-in">
                                 <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4"><div><h2 className="text-3xl font-black text-white">TURMAS DE <span className="text-insanus-red">SIMULADOS</span></h2><p className="text-gray-500 text-xs mt-1">Crie turmas e adicione simulados para avaliação.</p></div><button onClick={() => setShowSimClassModal(true)} className="bg-insanus-red hover:bg-red-600 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 shadow-neon"><Icon.Plus className="w-4 h-4" /> NOVA TURMA</button></div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                                     {simuladoClasses.map(sc => (
                                         <div key={sc.id} className="glass rounded-2xl p-6 border border-white/5 hover:border-insanus-red/50 transition relative group">
                                             <div className="flex justify-between items-start mb-4"><div className="w-12 h-12 rounded-full bg-blue-900/20 flex items-center justify-center text-blue-400"><Icon.List className="w-6 h-6"/></div><div className="flex gap-2"><button onClick={() => setEditingSimClass(sc)} className="text-gray-400 hover:text-white"><Icon.Edit className="w-4 h-4"/></button><button onClick={() => handleDeleteSimClass(sc.id)} className="text-gray-400 hover:text-red-500"><Icon.Trash className="w-4 h-4"/></button></div></div>
@@ -1142,9 +1169,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onSwitchTo
                             </div>
                         )}
                         {view === 'plans' && (
-                            <div className="max-w-6xl mx-auto w-full animate-fade-in">
+                            <div className="max-w-[95%] w-full mx-auto animate-fade-in">
                                  <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4"><div><h2 className="text-3xl font-black text-white">PLANOS DE <span className="text-insanus-red">ESTUDO</span></h2><p className="text-gray-500 text-xs mt-1">Crie e edite os planejamentos disponíveis.</p></div><button onClick={() => setShowPlanModal(true)} className="bg-insanus-red hover:bg-red-600 text-white px-4 py-3 rounded-xl font-bold text-xs flex items-center gap-2 shadow-neon transition-transform hover:scale-105"><Icon.Plus className="w-4 h-4" /> NOVO PLANO</button></div>
-                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                                     {plans.map(p => (
                                         <div key={p.id} className="glass rounded-2xl overflow-hidden border border-white/5 hover:border-insanus-red/50 transition-all group relative h-72 flex flex-col">
                                             <div className="h-40 bg-black/50 relative overflow-hidden">

@@ -75,29 +75,38 @@
 
     /* Utility Classes for Glassmorphism */
     .glass {
-      background: rgba(15, 15, 15, 0.7);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      background: rgba(10, 10, 10, 0.6);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
     }
     
     .glass-hover:hover {
-      background: rgba(255, 31, 31, 0.1);
+      background: rgba(255, 31, 31, 0.05);
       border-color: rgba(255, 31, 31, 0.3);
-      box-shadow: 0 0 15px rgba(255, 31, 31, 0.15);
+      box-shadow: 0 0 15px rgba(255, 31, 31, 0.1);
     }
 
-    /* Subtle Grid Background Animation */
-    @keyframes gridMove {
-      0% { background-position: 0 0; }
-      100% { background-position: 40px 40px; }
-    }
-    
+    /* Enhanced Grid Background */
     .bg-tech-grid {
-      background-size: 40px 40px;
-      background-image: linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-                        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-      /* animation: gridMove 20s linear infinite; Optional movement */
+      background-size: 50px 50px;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+      mask-image: radial-gradient(circle at center, black 40%, transparent 100%);
+      -webkit-mask-image: radial-gradient(circle at center, black 40%, transparent 100%);
+    }
+
+    /* Optional: Scanline effect for extra retro-tech feel */
+    .scanlines {
+      background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2));
+      background-size: 100% 4px;
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      pointer-events: none;
+      z-index: 5;
+      opacity: 0.1;
     }
   </style>
 <script type="importmap">

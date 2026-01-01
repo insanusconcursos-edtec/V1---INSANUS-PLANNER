@@ -108,8 +108,9 @@ export interface Folder {
 }
 
 export interface CycleItem {
-  disciplineId: string;
-  subjectsCount: number; // How many subjects to advance
+  disciplineId?: string; // Optional if folderId is present
+  folderId?: string; // New: Supports adding a whole folder
+  subjectsCount: number; // How many subjects to advance per discipline in this slot
 }
 
 export interface Cycle {

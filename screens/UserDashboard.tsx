@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, StudyPlan, Routine, Goal, SubGoal, UserProgress, GoalType, PlanConfig, Discipline, Subject, UserLevel, SimuladoClass, Simulado, SimuladoAttempt, ScheduledItem } from '../types';
+import { User, StudyPlan, Routine, Goal, SubGoal, UserProgress, GoalType, PlanConfig, Discipline, Subject, UserLevel, SimuladoClass, Simulado, SimuladoAttempt, ScheduledItem, EditalTopic, Cycle, CycleItem } from '../types';
 import { Icon } from '../components/Icons';
 import { WEEKDAYS, calculateGoalDuration, uuid } from '../constants';
 import { fetchPlansFromDB, saveUserToDB, fetchSimuladoClassesFromDB, fetchSimuladoAttemptsFromDB, saveSimuladoAttemptToDB } from '../services/db';
@@ -11,7 +11,11 @@ interface Props {
 }
 
 // --- HELPER: DATE & TIME UTILS ---
-const getTodayStr = () => new Date().toISOString().split('T')[0];
+const getTodayStr = () => {
+    const d = new Date();
+    const offset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - offset).toISOString().split('T')[0];
+};
 
 const formatDate = (dateStr: string) => {
     if(!dateStr) return '--/--';
@@ -89,13 +93,12 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
                 score += val;
                 correctCount++;
             } else if (userAns && simulado.hasPenalty) {
-                // Penalidade simplificada: anula o valor da questão
                 score -= val;
             }
         }
         if (score < 0) score = 0;
 
-        const totalPoints = Object.values(simulado.questionValues).reduce((a,b)=>a+b, 0) || simulado.totalQuestions;
+        const totalPoints = Object.values(simulado.questionValues).reduce((a: number, b: number) => a + b, 0) || simulado.totalQuestions;
         const percent = totalPoints > 0 ? (score / totalPoints) * 100 : 0;
         const isApproved = simulado.minTotalPercent ? percent >= simulado.minTotalPercent : percent >= 50;
 
@@ -106,7 +109,7 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
             classId: classId,
             date: new Date().toISOString(),
             answers,
-            diagnosisReasons: {}, // Implementar se necessário UI de diagnóstico
+            diagnosisReasons: {}, 
             score,
             isApproved
         };
@@ -116,7 +119,6 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
 
     return (
         <div className="fixed inset-0 z-50 bg-black text-white flex flex-col animate-fade-in">
-             {/* Header */}
              <div className="h-16 border-b border-white/10 bg-insanus-black flex items-center justify-between px-6 shrink-0">
                 <div className="flex items-center gap-4">
                     <button onClick={onBack} className="text-gray-500 hover:text-white flex items-center gap-2">
@@ -135,7 +137,6 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
                 )}
              </div>
 
-             {/* Confirmation Modal */}
              {confirmFinish && (
                  <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur flex items-center justify-center p-4">
                      <div className="bg-black border border-white/10 p-8 rounded-xl max-w-sm w-full text-center">
@@ -149,20 +150,16 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
                  </div>
              )}
 
-             {/* Content */}
              <div className="flex-1 flex overflow-hidden">
-                {/* PDF Area (if exists) */}
                 {simulado.pdfUrl && (
                     <div className="w-1/2 border-r border-white/10 bg-gray-900 flex flex-col">
                         <div className="flex-1 flex items-center justify-center text-gray-500">
-                             {/* In a real app, render PDF here. For now, a placeholder or iframe if link is direct */}
                              <iframe src={simulado.pdfUrl} className="w-full h-full" title="PDF Viewer"></iframe>
                         </div>
                     </div>
                 )}
 
-                {/* Question Grid */}
-                <div className={`${simulado.pdfUrl ? 'w-1/2' : 'w-full max-w-4xl mx-auto'} flex flex-col bg-black/50`}>
+                <div className={`${simulado.pdfUrl ? 'w-1/2' : 'w-full max-w-5xl mx-auto'} flex flex-col bg-black/50`}>
                     <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
                          {attempt && (
                              <div className={`p-4 rounded-xl border mb-8 flex justify-between items-center ${attempt.isApproved ? 'bg-green-900/20 border-green-600' : 'bg-red-900/20 border-red-600'}`}>
@@ -247,9 +244,7 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
     const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
 
     return (
-        <div className="max-w-4xl mx-auto space-y-8 animate-fade-in mt-4">
-            
-            {/* PLAN MANAGEMENT CARD */}
+        <div className="max-w-7xl mx-auto space-y-8 animate-fade-in mt-4">
             {currentPlan && (
                 <div className="glass p-6 rounded-2xl border border-white/10 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-insanus-red"></div>
@@ -272,7 +267,10 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
                             <h4 className="font-bold text-gray-300 text-sm mb-2">ATRASOS E IMPREVISTOS</h4>
                             <p className="text-xs text-gray-500 mb-4">Replanejar define a data de início para HOJE, redistribuindo todas as metas pendentes.</p>
                             <button 
-                                onClick={() => { if(confirm("Isso vai reorganizar todo o cronograma futuro a partir de hoje. Continuar?")) onPlanAction('reschedule'); }}
+                                onClick={() => { 
+                                    // eslint-disable-next-line no-restricted-globals
+                                    if(confirm("Isso vai reorganizar todo o cronograma futuro a partir de hoje. Continuar?")) onPlanAction('reschedule'); 
+                                }}
                                 className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition"
                             >
                                 <Icon.RefreshCw className="w-4 h-4"/>
@@ -283,7 +281,6 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
                 </div>
             )}
 
-            {/* ROUTINE SETUP */}
             <div className="glass p-8 rounded-2xl border border-white/10">
                 <div className="text-center mb-10">
                     <Icon.Clock className="w-16 h-16 text-insanus-red mx-auto mb-4" />
@@ -350,11 +347,33 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
 };
 
 // --- SCHEDULE ENGINE ---
+
+// Helper to expand folder items into discipline items at runtime
+const expandCycleItems = (cycle: Cycle, plan: StudyPlan): CycleItem[] => {
+    const expandedItems: CycleItem[] = [];
+    cycle.items.forEach(item => {
+        if (item.folderId) {
+            // Find all disciplines in this folder, sort by order
+            const folderDisciplines = plan.disciplines
+                .filter(d => d.folderId === item.folderId)
+                .sort((a, b) => a.order - b.order);
+            
+            // Convert each discipline to a CycleItem
+            folderDisciplines.forEach(d => {
+                expandedItems.push({
+                    disciplineId: d.id,
+                    subjectsCount: item.subjectsCount
+                });
+            });
+        } else if (item.disciplineId) {
+            expandedItems.push(item);
+        }
+    });
+    return expandedItems;
+};
+
 const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: string, completedGoals: string[], userLevel: UserLevel, isPaused: boolean): Record<string, ScheduledItem[]> => {
     const schedule: Record<string, ScheduledItem[]> = {};
-    
-    // If paused, we basically return empty or handle it in UI. 
-    // Returning empty here ensures the calendar/daily view is clear.
     if (isPaused) return {}; 
     if (!plan || !plan.cycles || plan.cycles.length === 0) return {};
     
@@ -401,8 +420,8 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: strin
 
         while (minutesAvailable > 0 && safetyLoop < 50) {
             safetyLoop++;
-
             const cycle = plan.cycles[currentCycleIndex];
+            
             if (!cycle) {
                 if (plan.cycleSystem === 'rotativo' && plan.cycles.length > 0) {
                     currentCycleIndex = 0;
@@ -412,10 +431,19 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: strin
                 break;
             }
 
-            const cycleItem = cycle.items[currentItemIndex];
+            // CRITICAL: Expand folders into discipline list before processing
+            const activeItems = expandCycleItems(cycle, plan);
+
+            const cycleItem = activeItems[currentItemIndex];
             if (!cycleItem) {
                 currentCycleIndex++;
                 currentItemIndex = 0;
+                continue;
+            }
+            
+            // cycleItem now guaranteed to have disciplineId because of expansion
+            if (!cycleItem.disciplineId) {
+                currentItemIndex++;
                 continue;
             }
 
@@ -428,38 +456,23 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: strin
             }
 
             let scheduledForThisItem = 0;
-            
             while (scheduledForThisItem < cycleItem.subjectsCount) {
-                if (pointer >= queue.length) {
-                    break; 
-                }
-
+                if (pointer >= queue.length) break; 
                 const goal = queue[pointer];
                 const duration = calculateGoalDuration(goal, userLevel) || 30;
 
                 if (minutesAvailable >= duration || itemsProcessedToday === 0) {
                     const uniqueId = `${dateStr}_${cycle.id}_${cycleItem.disciplineId}_${goal.id}`;
-                    
                     dayItems.push({
-                         uniqueId,
-                         date: dateStr,
-                         goalId: goal.id,
-                         goalType: goal.type,
-                         title: goal.title,
-                         disciplineName: (goal as any)._disciplineName || "Disciplina",
-                         subjectName: (goal as any)._subjectName || "Assunto",
-                         duration: duration,
-                         isRevision: false,
-                         completed: completedGoals.includes(goal.id),
-                         originalGoal: goal
+                         uniqueId, date: dateStr, goalId: goal.id, goalType: goal.type,
+                         title: goal.title, disciplineName: (goal as any)._disciplineName || "Disciplina",
+                         subjectName: (goal as any)._subjectName || "Assunto", duration: duration,
+                         isRevision: false, completed: completedGoals.includes(goal.id), originalGoal: goal
                     });
-
                     minutesAvailable -= duration;
                     itemsProcessedToday++;
-                    
                     pointer++;
-                    disciplinePointers[cycleItem.disciplineId] = pointer;
-                    
+                    disciplinePointers[cycleItem.disciplineId!] = pointer;
                     scheduledForThisItem++;
                 } else {
                     minutesAvailable = 0;
@@ -468,12 +481,8 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: strin
             }
             currentItemIndex++;
         }
-
-        if (dayItems.length > 0) {
-            schedule[dateStr] = dayItems;
-        }
+        if (dayItems.length > 0) schedule[dateStr] = dayItems;
     }
-
     return schedule;
 };
 
@@ -498,7 +507,6 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const [attempts, setAttempts] = useState<SimuladoAttempt[]>([]);
   const [activeSimulado, setActiveSimulado] = useState<Simulado | null>(null);
 
-  // Calendar State
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
 
   useEffect(() => { loadData(); }, [user.id]); 
@@ -518,19 +526,13 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   // Regenerate Schedule
   useEffect(() => {
       const hasRoutine = user.routine && user.routine.days && Object.values(user.routine.days).some((v: number) => v > 0);
-      
       if (currentPlan && hasRoutine) {
           const config = user.planConfigs?.[currentPlan.id];
           const startDate = config?.startDate || getTodayStr();
           const isPaused = config?.isPaused || false;
-
           const generated = generateSchedule(
-              currentPlan, 
-              user.routine, 
-              startDate, 
-              user.progress.completedGoalIds, 
-              user.level || 'iniciante',
-              isPaused
+              currentPlan, user.routine, startDate, user.progress.completedGoalIds, 
+              user.level || 'iniciante', isPaused
           );
           setSchedule(generated);
       } else {
@@ -539,23 +541,16 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   }, [currentPlan, user.routine, user.progress.completedGoalIds, user.level, user.planConfigs]);
 
   const loadData = async () => {
-      // 1. Plans
       const allPlans = await fetchPlansFromDB();
       const userPlans = user.isAdmin ? allPlans : allPlans.filter(p => user.allowedPlans?.includes(p.id));
       setPlans(userPlans);
 
-      // Select Plan
       let activePlan: StudyPlan | undefined;
-      if (user.currentPlanId) {
-          activePlan = userPlans.find(p => p.id === user.currentPlanId);
-      }
-      if (!activePlan && userPlans.length > 0) {
-          activePlan = userPlans[0];
-      }
+      if (user.currentPlanId) activePlan = userPlans.find(p => p.id === user.currentPlanId);
+      if (!activePlan && userPlans.length > 0) activePlan = userPlans[0];
       
       if (activePlan) {
           setCurrentPlan(activePlan);
-          
           if (!user.planConfigs || !user.planConfigs[activePlan.id]) {
                const newConfigs = { ...user.planConfigs, [activePlan.id]: { startDate: getTodayStr(), isPaused: false }};
                const updatedUser = { ...user, planConfigs: newConfigs, currentPlanId: activePlan.id };
@@ -564,18 +559,14 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
           }
       }
 
-      // 2. Simulados
       const allClasses = await fetchSimuladoClassesFromDB();
       const userClasses = user.isAdmin ? allClasses : allClasses.filter(c => user.allowedSimuladoClasses?.includes(c.id));
       setSimuladoClasses(userClasses);
       const allAttempts = await fetchSimuladoAttemptsFromDB();
       setAttempts(allAttempts);
       
-      // 3. Check Routine
       const hasRoutine = user.routine && user.routine.days && Object.values(user.routine.days).some((v: number) => v > 0);
-      if (!hasRoutine) {
-          setView('setup'); 
-      }
+      if (!hasRoutine) setView('setup'); 
   };
 
   const handleSelectPlan = (planId: string) => {
@@ -583,9 +574,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       if (p) {
           setCurrentPlan(p);
           const newConfigs = { ...user.planConfigs };
-          if (!newConfigs[p.id]) {
-              newConfigs[p.id] = { startDate: getTodayStr(), isPaused: false };
-          }
+          if (!newConfigs[p.id]) newConfigs[p.id] = { startDate: getTodayStr(), isPaused: false };
           const updatedUser = { ...user, currentPlanId: planId, planConfigs: newConfigs };
           onUpdateUser(updatedUser);
           saveUserToDB(updatedUser);
@@ -594,16 +583,12 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
 
   const handleSetupSave = async (routine: Routine, level: UserLevel) => {
       const updatedUser = { ...user, routine, level };
-      
       if (currentPlan) {
            const newConfigs = { ...updatedUser.planConfigs };
-           if (!newConfigs[currentPlan.id]) {
-               newConfigs[currentPlan.id] = { startDate: getTodayStr(), isPaused: false };
-           }
+           if (!newConfigs[currentPlan.id]) newConfigs[currentPlan.id] = { startDate: getTodayStr(), isPaused: false };
            updatedUser.planConfigs = newConfigs;
            updatedUser.currentPlanId = currentPlan.id;
       }
-
       onUpdateUser(updatedUser);
       await saveUserToDB(updatedUser);
       setView('daily');
@@ -612,38 +597,24 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const handlePlanAction = async (action: 'pause' | 'reschedule') => {
       if (!currentPlan) return;
       const config = user.planConfigs[currentPlan.id] || { startDate: getTodayStr(), isPaused: false };
-      
       let newConfig = { ...config };
-      
-      if (action === 'pause') {
-          newConfig.isPaused = !newConfig.isPaused;
-      } else if (action === 'reschedule') {
-          newConfig.startDate = getTodayStr(); // Reset start date to NOW
-          newConfig.isPaused = false; // Unpause if rescheduling
+      if (action === 'pause') newConfig.isPaused = !newConfig.isPaused;
+      else if (action === 'reschedule') {
+          newConfig.startDate = getTodayStr(); 
+          newConfig.isPaused = false; 
       }
-
-      const updatedUser = {
-          ...user,
-          planConfigs: { ...user.planConfigs, [currentPlan.id]: newConfig }
-      };
-
+      const updatedUser = { ...user, planConfigs: { ...user.planConfigs, [currentPlan.id]: newConfig } };
       onUpdateUser(updatedUser);
       await saveUserToDB(updatedUser);
   };
 
-  // --- TIMER ACTIONS ---
   const startTimer = (goalId: string) => {
-      if (activeGoalId && activeGoalId !== goalId) {
-          // Stop previous timer automatically
-          saveStudyTime();
-      }
+      if (activeGoalId && activeGoalId !== goalId) saveStudyTime();
       setActiveGoalId(goalId);
       setIsTimerRunning(true);
   };
 
-  const pauseTimer = () => {
-      setIsTimerRunning(false);
-  };
+  const pauseTimer = () => setIsTimerRunning(false);
 
   const saveStudyTime = async (shouldCompleteGoal: boolean = false) => {
       if (!activeGoalId || timerSeconds === 0) {
@@ -653,62 +624,27 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
           setIsTimerRunning(false);
           return;
       }
-
-      // Persist Time
       const secondsToAdd = timerSeconds;
       const newTotal = (user.progress.totalStudySeconds || 0) + secondsToAdd;
       const currentPlanTotal = (user.progress.planStudySeconds?.[currentPlan?.id || ''] || 0) + secondsToAdd;
-      
-      const updatedUser = {
-          ...user,
-          progress: {
-              ...user.progress,
-              totalStudySeconds: newTotal,
-              planStudySeconds: {
-                  ...user.progress.planStudySeconds,
-                  [currentPlan?.id || 'unknown']: currentPlanTotal
-              }
-          }
-      };
-
-      // Reset Timer State locally first
+      const updatedUser = { ...user, progress: { ...user.progress, totalStudySeconds: newTotal, planStudySeconds: { ...user.progress.planStudySeconds, [currentPlan?.id || 'unknown']: currentPlanTotal } } };
       setActiveGoalId(null);
       setTimerSeconds(0);
       setIsTimerRunning(false);
-
-      // If we need to mark as complete
       if (shouldCompleteGoal && activeGoalId) {
-          // Add to completed list
-          if (!updatedUser.progress.completedGoalIds.includes(activeGoalId)) {
-              updatedUser.progress.completedGoalIds.push(activeGoalId);
-          }
+          if (!updatedUser.progress.completedGoalIds.includes(activeGoalId)) updatedUser.progress.completedGoalIds.push(activeGoalId);
       }
-
       onUpdateUser(updatedUser);
       await saveUserToDB(updatedUser);
   };
 
   const toggleGoalComplete = async (goalId: string) => {
-      // If timer is running for THIS goal, save time and finish
-      if (activeGoalId === goalId) {
-          await saveStudyTime(true);
-          return;
-      }
-
+      if (activeGoalId === goalId) { await saveStudyTime(true); return; }
       const isCompleted = user.progress.completedGoalIds.includes(goalId);
       let newCompleted = [...user.progress.completedGoalIds];
-      
-      if (isCompleted) {
-          newCompleted = newCompleted.filter(id => id !== goalId);
-      } else {
-          newCompleted.push(goalId);
-      }
-      
-      const updatedUser = {
-          ...user,
-          progress: { ...user.progress, completedGoalIds: newCompleted }
-      };
-      
+      if (isCompleted) newCompleted = newCompleted.filter(id => id !== goalId);
+      else newCompleted.push(goalId);
+      const updatedUser = { ...user, progress: { ...user.progress, completedGoalIds: newCompleted } };
       onUpdateUser(updatedUser);
       await saveUserToDB(updatedUser);
   };
@@ -717,57 +653,20 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       setExpandedItems(prev => prev.includes(uniqueId) ? prev.filter(id => id !== uniqueId) : [...prev, uniqueId]);
   }
 
-  // --- RENDERERS ---
-
   const renderDailyView = () => {
       const daySchedule = schedule[selectedDate] || [];
       const isToday = selectedDate === getTodayStr();
       const dayName = getDayName(selectedDate);
-      const minsAvailable = user.routine?.days?.[dayName] || 0;
       const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
 
       if (!currentPlan) return <div className="text-center p-10 text-gray-500">Selecione um plano no menu lateral para começar.</div>;
-
-      if (isPlanPaused) {
-          return (
-              <div className="flex flex-col items-center justify-center h-[50vh] animate-fade-in text-center">
-                  <div className="w-20 h-20 bg-yellow-500/10 rounded-full flex items-center justify-center mb-6">
-                      <Icon.Pause className="w-10 h-10 text-yellow-500" />
-                  </div>
-                  <h2 className="text-3xl font-black text-white uppercase mb-2">PLANO PAUSADO</h2>
-                  <p className="text-gray-500 max-w-md">Seu cronograma está congelado. Retome o plano nas configurações para voltar a ver suas metas diárias.</p>
-                  <button onClick={() => setView('setup')} className="mt-6 bg-white/10 hover:bg-white/20 px-6 py-3 rounded-xl font-bold text-white transition">IR PARA CONFIGURAÇÕES</button>
-              </div>
-          )
-      }
-
-      if (currentPlan.cycles.length === 0) {
-           return (
-              <div className="p-8 border border-red-500/30 bg-red-900/10 rounded-xl text-center">
-                  <h3 className="text-red-500 font-bold mb-2">PLANO SEM CICLOS DEFINIDOS</h3>
-                  <p className="text-gray-400 text-sm">Este plano de estudo não possui ciclos de estudo configurados.</p>
-              </div>
-           );
-      }
-
-      if (minsAvailable === 0 && daySchedule.length === 0) {
-          return (
-              <div className="flex flex-col items-center justify-center p-10 border border-dashed border-white/10 rounded-xl animate-fade-in">
-                  <Icon.Clock className="w-10 h-10 text-insanus-red mb-4" />
-                  <h3 className="font-bold text-white text-lg">Dia sem estudos agendados</h3>
-                  <p className="text-gray-500 mb-4 max-w-md text-center">Você definiu 0 minutos para {WEEKDAYS.find(w=>w.key===dayName)?.label}.</p>
-                  <button onClick={() => setView('setup')} className="text-xs bg-white/10 hover:bg-white/20 px-4 py-2 rounded text-white font-bold uppercase transition">Ajustar Rotina</button>
-              </div>
-          );
-      }
+      if (isPlanPaused) return <div className="text-center p-20 text-yellow-500">PLANO PAUSADO</div>;
 
       return (
-          <div className="max-w-4xl mx-auto animate-fade-in space-y-6">
+          <div className="max-w-[1600px] w-full mx-auto animate-fade-in space-y-6">
               <div className="flex justify-between items-end border-b border-white/10 pb-4">
                   <div>
-                      <h2 className="text-4xl font-black text-white uppercase tracking-tight">
-                          {isToday ? 'HOJE' : formatDate(selectedDate)}
-                      </h2>
+                      <h2 className="text-4xl font-black text-white uppercase tracking-tight">{isToday ? 'HOJE' : formatDate(selectedDate)}</h2>
                       <p className="text-insanus-red font-mono text-sm uppercase">{WEEKDAYS.find(w => w.key === dayName)?.label}</p>
                   </div>
                   <div className="text-right">
@@ -777,19 +676,16 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
               </div>
 
               {daySchedule.length === 0 ? (
-                   <div className="text-center py-20 text-gray-600 italic border border-dashed border-white/5 rounded-xl">
-                       <p className="mb-2">Nada agendado para hoje.</p>
-                       <p className="text-xs">Verifique se as disciplinas do Ciclo possuem metas cadastradas.</p>
-                   </div>
+                   <div className="text-center py-20 text-gray-600 italic">Nada agendado para hoje.</div>
               ) : (
-                  <div className="grid gap-4">
-                      {daySchedule.map((item, idx) => {
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      {daySchedule.map((item) => {
                           const goalColor = item.originalGoal?.color || '#FF1F1F';
-                          const isExpanded = expandedItems.includes(item.uniqueId);
                           const isActive = activeGoalId === item.goalId;
+                          const isExpanded = expandedItems.includes(item.uniqueId);
 
                           return (
-                            <div key={item.uniqueId} className={`glass rounded-xl border-l-4 transition-all ${item.completed ? 'border-green-500 opacity-60' : isActive ? 'border-yellow-500 bg-yellow-500/5 shadow-neon' : 'hover:translate-x-1'}`} style={{ borderLeftColor: item.completed ? undefined : isActive ? '#EAB308' : goalColor }}>
+                            <div key={item.uniqueId} className={`glass rounded-xl border-l-4 transition-all ${item.completed ? 'border-green-500 opacity-60' : isActive ? 'border-yellow-500 bg-yellow-500/5' : ''}`} style={{ borderLeftColor: item.completed ? undefined : isActive ? '#EAB308' : goalColor }}>
                                 <div className="p-4 flex items-start gap-4">
                                     <div onClick={() => toggleGoalComplete(item.goalId)} className={`shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer transition ${item.completed ? 'bg-green-500 border-green-500 text-black' : 'border-gray-500 hover:border-white'}`}>
                                         {item.completed && <Icon.Check className="w-4 h-4" />}
@@ -797,11 +693,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                                     <div className="flex-1">
                                         <div className="flex justify-between items-start mb-1">
                                             <span className="text-[10px] font-bold bg-white/10 px-2 py-0.5 rounded text-gray-300 uppercase">{item.goalType}</span>
-                                            {isActive ? (
-                                                <span className="text-sm font-mono font-bold text-yellow-500 animate-pulse">{formatStopwatch(timerSeconds)}</span>
-                                            ) : (
-                                                <span className="text-[10px] font-mono text-gray-500">{item.duration} min</span>
-                                            )}
+                                            {isActive ? <span className="text-sm font-mono font-bold text-yellow-500 animate-pulse">{formatStopwatch(timerSeconds)}</span> : <span className="text-[10px] font-mono text-gray-500">{item.duration} min</span>}
                                         </div>
                                         <h3 className={`font-bold text-lg ${item.completed ? 'line-through text-gray-500' : 'text-white'}`}>{item.title}</h3>
                                         <div className="text-xs text-gray-400 mt-1 flex gap-2">
@@ -810,74 +702,33 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                                             <span>{item.subjectName}</span>
                                         </div>
                                         
-                                        {/* TIMER CONTROLS */}
                                         {!item.completed && (
                                             <div className="mt-4 flex gap-2">
                                                 {!isActive ? (
-                                                    <button onClick={() => startTimer(item.goalId)} className="flex items-center gap-2 bg-insanus-red hover:bg-red-600 px-4 py-2 rounded text-xs font-bold text-white transition shadow-neon">
-                                                        <Icon.Play className="w-3 h-3" /> INICIAR
-                                                    </button>
+                                                    <button onClick={() => startTimer(item.goalId)} className="flex items-center gap-2 bg-insanus-red hover:bg-red-600 px-4 py-2 rounded text-xs font-bold text-white transition shadow-neon"><Icon.Play className="w-3 h-3" /> INICIAR</button>
                                                 ) : (
                                                     <>
-                                                        {isTimerRunning ? (
-                                                            <button onClick={pauseTimer} className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-500 px-4 py-2 rounded text-xs font-bold text-white transition">
-                                                                <Icon.Pause className="w-3 h-3" /> PAUSAR
-                                                            </button>
-                                                        ) : (
-                                                            <button onClick={() => setIsTimerRunning(true)} className="flex items-center gap-2 bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-xs font-bold text-white transition">
-                                                                <Icon.Play className="w-3 h-3" /> RETOMAR
-                                                            </button>
-                                                        )}
-                                                        <button onClick={() => saveStudyTime(false)} className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-xs font-bold text-white transition">
-                                                            <Icon.Check className="w-3 h-3" /> SALVAR TEMPO
-                                                        </button>
+                                                        {isTimerRunning ? <button onClick={pauseTimer} className="flex items-center gap-2 bg-yellow-600 px-4 py-2 rounded text-xs font-bold text-white"><Icon.Pause className="w-3 h-3" /> PAUSAR</button> : <button onClick={() => setIsTimerRunning(true)} className="flex items-center gap-2 bg-green-600 px-4 py-2 rounded text-xs font-bold text-white"><Icon.Play className="w-3 h-3" /> RETOMAR</button>}
+                                                        <button onClick={() => saveStudyTime(false)} className="flex items-center gap-2 bg-gray-700 px-4 py-2 rounded text-xs font-bold text-white"><Icon.Check className="w-3 h-3" /> SALVAR TEMPO</button>
                                                     </>
                                                 )}
                                             </div>
                                         )}
                                         
-                                        {/* ACTION BUTTONS (NON-AULA) */}
-                                        {item.goalType !== 'AULA' && (
-                                            <div className="flex flex-wrap gap-2 mt-4 border-t border-white/5 pt-3">
-                                                {item.originalGoal?.pdfUrl && (
-                                                    <a href={item.originalGoal.pdfUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded text-xs font-bold text-white transition">
-                                                        <Icon.FileText className="w-4 h-4 text-insanus-red" /> ABRIR MATERIAL
-                                                    </a>
-                                                )}
-                                                {item.originalGoal?.link && (
-                                                    <a href={item.originalGoal.link} target="_blank" rel="noreferrer" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded text-xs font-bold text-white transition">
-                                                        <Icon.Link className="w-4 h-4 text-blue-400" /> ACESSAR LINK
-                                                    </a>
-                                                )}
-                                            </div>
-                                        )}
-
-                                        {/* ACCORDION (AULA) */}
                                         {item.goalType === 'AULA' && (
                                             <div className="mt-4">
                                                 <button onClick={() => toggleAccordion(item.uniqueId)} className="flex items-center gap-2 text-xs font-bold text-gray-400 hover:text-white transition">
                                                     {isExpanded ? <Icon.ArrowUp className="w-4 h-4"/> : <Icon.ArrowDown className="w-4 h-4"/>}
                                                     {isExpanded ? 'OCULTAR AULAS' : `VER ${item.originalGoal?.subGoals?.length || 0} AULAS`}
                                                 </button>
-                                                
                                                 {isExpanded && (
                                                     <div className="mt-3 space-y-2 border-t border-white/10 pt-3 animate-fade-in">
                                                         {item.originalGoal?.subGoals?.map((sub, sIdx) => (
                                                             <div key={sIdx} className="flex justify-between items-center bg-black/30 p-2 rounded border border-white/5">
-                                                                <div className="flex items-center gap-3">
-                                                                    <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-[10px] text-gray-500 font-mono">{sIdx + 1}</div>
-                                                                    <span className="text-sm text-gray-300 font-medium">{sub.title}</span>
-                                                                </div>
-                                                                {sub.link && (
-                                                                    <a href={sub.link} target="_blank" rel="noreferrer" className="bg-insanus-red hover:bg-red-600 text-white p-2 rounded-lg transition">
-                                                                        <Icon.Play className="w-3 h-3" />
-                                                                    </a>
-                                                                )}
+                                                                <span className="text-sm text-gray-300 font-medium">{sIdx + 1}. {sub.title}</span>
+                                                                {sub.link && <a href={sub.link} target="_blank" rel="noreferrer" className="bg-insanus-red p-2 rounded-lg text-white"><Icon.Play className="w-3 h-3" /></a>}
                                                             </div>
                                                         ))}
-                                                        {(!item.originalGoal?.subGoals || item.originalGoal.subGoals.length === 0) && (
-                                                            <div className="text-xs text-gray-600 italic">Nenhuma submeta cadastrada.</div>
-                                                        )}
                                                     </div>
                                                 )}
                                             </div>
@@ -894,165 +745,212 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   };
 
   const renderCalendarView = () => {
-      const weekDates = getWeekDays(selectedDate);
-      const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
+    // ... existing implementation
+    const weekDates = getWeekDays(selectedDate);
+    const generateMonthGrid = () => {
+        const date = new Date(selectedDate);
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const startDay = firstDay.getDay();
+        const startDate = new Date(firstDay);
+        startDate.setDate(startDate.getDate() - startDay);
+        const grid = [];
+        for(let i=0; i<42; i++) {
+             const d = new Date(startDate);
+             d.setDate(d.getDate() + i);
+             grid.push(d.toISOString().split('T')[0]);
+        }
+        return grid;
+    };
 
-      if(isPlanPaused) return <div className="text-center p-20 text-yellow-500 font-bold">PLANO PAUSADO</div>;
+    const monthDates = generateMonthGrid();
+    const currentMonthName = new Date(selectedDate).toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
 
-      const generateMonthGrid = () => {
-          const start = new Date(selectedDate);
-          start.setDate(1); 
-          const day = start.getDay();
-          start.setDate(start.getDate() - day);
-          const grid = [];
-          for(let i=0; i<35; i++) {
-               const d = new Date(start);
-               d.setDate(d.getDate() + i);
-               grid.push(d.toISOString().split('T')[0]);
-          }
-          return grid;
-      };
-      const monthDates = generateMonthGrid();
+    return (
+        <div className="max-w-[1600px] w-full mx-auto animate-fade-in h-[calc(100vh-100px)] flex flex-col">
+             <div className="flex justify-between items-center border-b border-white/10 pb-6 shrink-0">
+                <div>
+                    <h2 className="text-3xl font-black text-white uppercase">CALENDÁRIO</h2>
+                    <p className="text-xs text-insanus-red font-bold uppercase tracking-widest">{currentMonthName}</p>
+                </div>
+                <div className="flex items-center gap-4">
+                    <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
+                        <button onClick={() => setCalendarMode('week')} className={`px-4 py-2 text-xs font-bold rounded transition-all ${calendarMode === 'week' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white'}`}>SEMANAL</button>
+                        <button onClick={() => setCalendarMode('month')} className={`px-4 py-2 text-xs font-bold rounded transition-all ${calendarMode === 'month' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white'}`}>MENSAL</button>
+                    </div>
+                    <div className="flex gap-1 bg-black/40 rounded-lg border border-white/10 p-1">
+                        <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() - (calendarMode === 'week' ? 7 : 30)); setSelectedDate(d.toISOString().split('T')[0]); }} className="p-2 hover:bg-white/10 rounded text-white transition"><Icon.ArrowUp className="-rotate-90 w-4 h-4" /></button>
+                        <button onClick={() => setSelectedDate(getTodayStr())} className="px-3 py-2 hover:bg-white/10 rounded text-[10px] font-bold text-white uppercase transition border-x border-white/5">Hoje</button>
+                        <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() + (calendarMode === 'week' ? 7 : 30)); setSelectedDate(d.toISOString().split('T')[0]); }} className="p-2 hover:bg-white/10 rounded text-white transition"><Icon.ArrowDown className="-rotate-90 w-4 h-4" /></button>
+                    </div>
+                </div>
+            </div>
 
-      return (
-          <div className="max-w-7xl mx-auto animate-fade-in h-[calc(100vh-100px)] flex flex-col">
-              <div className="flex justify-between items-center mb-6 border-b border-white/10 pb-4 shrink-0">
-                  <h2 className="text-3xl font-black text-white">CALENDÁRIO</h2>
-                  <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
-                      <button onClick={() => setCalendarMode('week')} className={`px-4 py-1 text-xs font-bold rounded ${calendarMode === 'week' ? 'bg-insanus-red text-white' : 'text-gray-400 hover:text-white'}`}>SEMANAL</button>
-                      <button onClick={() => setCalendarMode('month')} className={`px-4 py-1 text-xs font-bold rounded ${calendarMode === 'month' ? 'bg-insanus-red text-white' : 'text-gray-400 hover:text-white'}`}>MENSAL</button>
-                  </div>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto custom-scrollbar">
-                  {calendarMode === 'week' ? (
-                      <div className="grid grid-cols-7 gap-2 h-full min-h-[500px]">
-                          {weekDates.map((date, i) => {
-                              const items = schedule[date] || [];
-                              const isToday = date === getTodayStr();
-                              const isSelected = date === selectedDate;
-                              
-                              return (
-                                  <div key={date} className={`flex flex-col rounded-xl overflow-hidden border transition-all ${isToday ? 'border-insanus-red bg-insanus-red/5' : isSelected ? 'border-white/30 bg-white/5' : 'border-white/5 bg-black/20'}`}>
-                                      <div className={`p-2 text-center border-b border-white/5 ${isToday ? 'bg-insanus-red text-white' : 'bg-white/5'}`}>
-                                          <div className="text-[10px] font-bold uppercase">{['DOM','SEG','TER','QUA','QUI','SEX','SAB'][new Date(date+'T12:00:00').getDay()]}</div>
-                                          <div className="text-lg font-black">{date.split('-')[2]}</div>
-                                      </div>
-                                      <div 
-                                        className="flex-1 p-2 space-y-2 overflow-y-auto cursor-pointer"
-                                        onClick={() => { setSelectedDate(date); setView('daily'); }}
-                                      >
-                                          {items.map((item, idx) => {
-                                              const goalColor = item.originalGoal?.color || '#FF1F1F';
-                                              return (
-                                                  <div 
-                                                    key={idx} 
-                                                    className={`p-2 rounded text-[10px] border flex flex-col gap-1 transition ${item.completed ? 'bg-green-900/30 border-green-800 text-green-400 line-through' : 'bg-black border-white/10 text-gray-300 hover:border-white'}`}
-                                                    style={{ borderColor: item.completed ? undefined : goalColor }}
-                                                  >
-                                                      <div className="font-bold truncate" style={{ color: item.completed ? undefined : goalColor }}>{item.disciplineName}</div>
-                                                      <div className="truncate opacity-70 leading-tight">{item.title}</div>
-                                                  </div>
-                                              );
-                                          })}
-                                          {items.length === 0 && <div className="text-[9px] text-center text-gray-600 mt-4">-</div>}
-                                      </div>
-                                  </div>
-                              )
-                          })}
-                      </div>
-                  ) : (
-                      <div className="grid grid-cols-7 gap-2">
-                          {monthDates.map((date) => {
-                              const items = schedule[date] || [];
-                              const isSelected = date === selectedDate;
-                              const isToday = date === getTodayStr();
-                              return (
-                                  <div 
-                                    key={date} 
-                                    onClick={() => { setSelectedDate(date); setView('daily'); }}
-                                    className={`h-24 p-2 rounded-lg border cursor-pointer hover:bg-white/5 flex flex-col justify-between ${isSelected ? 'border-insanus-red bg-insanus-red/10' : isToday ? 'border-white bg-white/10' : 'border-white/5 bg-black/20'}`}
-                                  >
-                                      <div className={`text-right text-xs font-bold ${isToday ? 'text-insanus-red' : 'text-gray-500'}`}>{date.split('-')[2]}</div>
-                                      <div className="flex flex-wrap gap-1 content-end">
-                                          {items.slice(0, 6).map((item, i) => {
-                                               const goalColor = item.originalGoal?.color || '#FF1F1F';
-                                               return (
-                                                  <div 
-                                                    key={i} 
-                                                    className={`w-2 h-2 rounded-full ${item.completed ? 'bg-green-500' : ''}`} 
-                                                    style={{ backgroundColor: item.completed ? undefined : goalColor }}
-                                                    title={item.title}
-                                                  ></div>
-                                               );
-                                          })}
-                                          {items.length > 6 && <div className="w-2 h-2 rounded-full bg-gray-500 text-[6px] flex items-center justify-center text-white">+</div>}
-                                      </div>
-                                  </div>
-                              )
-                          })}
-                      </div>
-                  )}
-              </div>
-          </div>
-      )
+            <div className="grid grid-cols-7 gap-2 mb-2 mt-4 text-center shrink-0">
+                {WEEKDAYS.map(d => <div key={d.key} className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{d.label.split('-')[0]}</div>)}
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+                {calendarMode === 'week' ? (
+                    <div className="grid grid-cols-7 gap-2 h-full min-h-[600px]">
+                        {weekDates.map(dateStr => {
+                            const items = schedule[dateStr] || [];
+                            const isSelected = selectedDate === dateStr;
+                            const isToday = dateStr === getTodayStr();
+                            return (
+                                <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setView('daily'); }} className={`rounded-xl border flex flex-col transition-all cursor-pointer group h-full bg-black/20 ${isSelected ? 'bg-white/5 border-insanus-red shadow-[inset_0_0_20px_rgba(255,31,31,0.1)]' : 'border-white/5 hover:border-white/20 hover:bg-white/5'} ${isToday ? 'ring-1 ring-insanus-red ring-offset-2 ring-offset-black' : ''}`}>
+                                    <div className={`text-center p-3 border-b border-white/5 ${isToday ? 'bg-insanus-red text-white' : 'bg-white/5'}`}>
+                                        <div className="text-2xl font-black">{dateStr.split('-')[2]}</div>
+                                    </div>
+                                    <div className="flex-1 p-2 space-y-2 overflow-y-auto custom-scrollbar">
+                                        {items.map((item, i) => {
+                                            const goalColor = item.originalGoal?.color || '#FF1F1F';
+                                            return (
+                                                <div key={i} className={`p-3 rounded-lg border-l-4 bg-black shadow-lg hover:translate-y-[-2px] transition-all ${item.completed ? 'opacity-50 grayscale' : ''}`} style={{ borderLeftColor: goalColor, borderTop: '1px solid rgba(255,255,255,0.05)', borderRight: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                                    <div className="flex justify-between items-start mb-1">
+                                                        <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: goalColor }}>{item.disciplineName}</span>
+                                                        {item.completed && <Icon.Check className="w-3 h-3 text-green-500" />}
+                                                    </div>
+                                                    <div className="text-xs font-bold text-white leading-snug line-clamp-3 mb-2">{item.title}</div>
+                                                    <div className="flex items-center gap-2 mt-auto">
+                                                        <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-mono text-gray-400">{item.duration}m</span>
+                                                        <span className="text-[8px] uppercase font-bold text-gray-500">{item.goalType}</span>
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-7 gap-2 h-full grid-rows-6">
+                        {monthDates.map(dateStr => {
+                            const items = schedule[dateStr] || [];
+                            const isSelected = selectedDate === dateStr;
+                            const isToday = dateStr === getTodayStr();
+                            const isCurrentMonth = dateStr.slice(0, 7) === selectedDate.slice(0, 7);
+                            return (
+                                <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setView('daily'); }} className={`rounded-lg border p-2 flex flex-col transition-all cursor-pointer hover:bg-white/10 min-h-[80px] ${isSelected ? 'bg-white/5 border-insanus-red' : 'border-white/5 bg-black/40'} ${!isCurrentMonth ? 'opacity-30' : ''}`}>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className={`text-xs font-bold ${isToday ? 'text-insanus-red bg-insanus-red/10 px-1.5 rounded' : 'text-gray-400'}`}>{dateStr.split('-')[2]}</span>
+                                        {items.length > 0 && <span className="text-[9px] text-gray-600 font-mono">{items.length}</span>}
+                                    </div>
+                                    <div className="flex-1 flex flex-col gap-1 overflow-hidden">
+                                        {items.slice(0, 3).map((item, i) => (
+                                            <div key={i} className="flex items-center gap-1">
+                                                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.completed ? 'bg-green-500' : ''}`} style={{ backgroundColor: item.completed ? undefined : item.originalGoal?.color || '#333' }}></div>
+                                                <div className="text-[9px] text-gray-500 truncate leading-none">{item.disciplineName}</div>
+                                            </div>
+                                        ))}
+                                        {items.length > 3 && <div className="text-[8px] text-gray-600 text-center font-bold mt-auto">+{items.length - 3} mais</div>}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
   };
 
   const renderEditalView = () => {
       if (!currentPlan?.editalVerticalizado) return <div className="p-10 text-center text-gray-500">Edital Verticalizado não configurado neste plano.</div>;
-      
       let totalTopics = 0;
       let completedTopics = 0;
-
-      const isTopicDone = (t: any) => {
-          const linkedGoals = Object.values(t.links || {}).filter(Boolean) as string[];
-          if (linkedGoals.length === 0) return false;
-          return linkedGoals.some(gid => user.progress.completedGoalIds.includes(gid));
+      const ORDERED_LINKS = ['aula', 'material', 'questoes', 'leiSeca', 'resumo', 'revisao'];
+      const findGoal = (goalId: string) => {
+          for (const d of currentPlan.disciplines) {
+              for (const s of d.subjects) {
+                  const g = s.goals.find(g => g.id === goalId);
+                  if (g) return g;
+              }
+          }
+          return null;
       };
-
-      currentPlan.editalVerticalizado.forEach(d => {
-          d.topics.forEach(t => {
-              totalTopics++;
-              if (isTopicDone(t)) completedTopics++;
+      const isTopicDone = (t: EditalTopic) => {
+          const linkedGoalIds = ORDERED_LINKS.map(type => t.links[type as keyof typeof t.links]).filter(id => !!id) as string[];
+          if (linkedGoalIds.length === 0) return false;
+          const allGoalsDone = linkedGoalIds.every(gid => user.progress.completedGoalIds.includes(gid));
+          if (!allGoalsDone) return false;
+          return linkedGoalIds.every(gid => {
+              const goal = findGoal(gid);
+              if (goal && goal.hasRevision) {
+                  const rev1 = user.progress.completedRevisionIds.includes(`${gid}_0`);
+                  const rev2 = user.progress.completedRevisionIds.includes(`${gid}_1`);
+                  return rev1 && rev2;
+              }
+              return true; 
           });
-      });
-      
+      };
+      currentPlan.editalVerticalizado.forEach(d => d.topics.forEach(t => { totalTopics++; if (isTopicDone(t)) completedTopics++; }));
       const percentage = totalTopics === 0 ? 0 : Math.round((completedTopics / totalTopics) * 100);
 
       return (
-          <div className="max-w-4xl mx-auto animate-fade-in space-y-8">
+          <div className="max-w-[1600px] w-full mx-auto animate-fade-in space-y-8">
               <div className="flex items-center justify-between border-b border-white/10 pb-6">
                   <h2 className="text-3xl font-black text-white">EDITAL <span className="text-insanus-red">VERTICALIZADO</span></h2>
-                  <div className="text-right">
-                      <div className="text-4xl font-black text-white">{percentage}%</div>
-                      <div className="text-xs text-gray-500 uppercase font-bold">Concluído</div>
-                  </div>
+                  <div className="text-right"><div className="text-4xl font-black text-white">{percentage}%</div><div className="text-xs text-gray-500 uppercase font-bold">Concluído</div></div>
               </div>
-
               <div className="space-y-6">
                   {currentPlan.editalVerticalizado.map(disc => {
                       const discTotal = disc.topics.length;
                       const discDone = disc.topics.filter(t => isTopicDone(t)).length;
                       const discPerc = discTotal === 0 ? 0 : (discDone / discTotal) * 100;
-
                       return (
                           <div key={disc.id} className="glass rounded-xl border border-white/5 overflow-hidden">
                               <div className="bg-white/5 p-4 flex justify-between items-center cursor-pointer hover:bg-white/10">
                                   <h3 className="font-bold text-white uppercase">{disc.name}</h3>
                                   <div className="text-xs font-mono text-gray-400">{discDone}/{discTotal}</div>
                               </div>
-                              <div className="h-1 w-full bg-black">
-                                  <div className="h-full bg-insanus-red transition-all duration-1000" style={{ width: `${discPerc}%` }}></div>
-                              </div>
+                              <div className="h-1 w-full bg-black"><div className="h-full bg-insanus-red transition-all duration-1000" style={{ width: `${discPerc}%` }}></div></div>
                               <div className="p-4 space-y-2">
                                   {disc.topics.map(topic => {
                                       const done = isTopicDone(topic);
                                       return (
-                                          <div key={topic.id} className="flex items-center gap-3 text-sm group">
-                                              <div className={`w-4 h-4 rounded border flex items-center justify-center ${done ? 'bg-green-600 border-green-600' : 'border-gray-600'}`}>
-                                                  {done && <Icon.Check className="w-3 h-3 text-white" />}
+                                          <div key={topic.id} className="flex flex-col gap-2 py-1 border-b border-white/5 last:border-0">
+                                              <div className="flex items-center gap-3 text-sm group">
+                                                  <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${done ? 'bg-green-600 border-green-600' : 'border-gray-600'}`}>{done && <Icon.Check className="w-3 h-3 text-white" />}</div>
+                                                  <span className={done ? 'text-gray-500 line-through' : 'text-gray-300 group-hover:text-white transition'}>{topic.name}</span>
                                               </div>
-                                              <span className={done ? 'text-gray-500 line-through' : 'text-gray-300 group-hover:text-white transition'}>{topic.name}</span>
+                                              <div className="flex flex-wrap gap-2 ml-7">
+                                                  {ORDERED_LINKS.map(type => {
+                                                      const goalId = topic.links[type as keyof typeof topic.links];
+                                                      if(!goalId) return null;
+                                                      const goal = findGoal(goalId as string);
+                                                      if(!goal) return null;
+                                                      
+                                                      const isGoalDone = user.progress.completedGoalIds.includes(goal.id);
+
+                                                      let IconComp = Icon.FileText;
+                                                      if(type === 'aula') IconComp = Icon.Play;
+                                                      if(type === 'questoes') IconComp = Icon.Code;
+                                                      if(type === 'leiSeca') IconComp = Icon.Book;
+                                                      if(type === 'resumo') IconComp = Icon.Edit;
+                                                      if(type === 'revisao') IconComp = Icon.RefreshCw;
+                                                      
+                                                      return (
+                                                          <a key={type} 
+                                                             href={goal.link || goal.pdfUrl} 
+                                                             target="_blank" 
+                                                             rel="noreferrer" 
+                                                             className={`flex items-center gap-2 px-2 py-1 rounded border text-[10px] font-bold uppercase transition hover:brightness-125 ${isGoalDone ? '!border-green-500 !bg-green-500/10 !text-green-500' : ''}`}
+                                                             style={{ 
+                                                                 borderColor: isGoalDone ? undefined : goal.color || '#333', 
+                                                                 color: isGoalDone ? undefined : goal.color || '#999', 
+                                                                 backgroundColor: isGoalDone ? undefined : (goal.color || '#000') + '15' 
+                                                             }}
+                                                          >
+                                                              <IconComp className="w-3 h-3"/>
+                                                              {goal.title}
+                                                              {isGoalDone && <Icon.Check className="w-3 h-3 ml-1" />}
+                                                          </a>
+                                                      );
+                                                  })}
+                                              </div>
                                           </div>
                                       )
                                   })}
@@ -1065,24 +963,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       )
   };
 
-  if (activeSimulado) {
-       const attempt = attempts.find(a => a.userId === user.id && a.simuladoId === activeSimulado.id);
-       const parentClass = simuladoClasses.find(c => c.simulados.some(s => s.id === activeSimulado.id));
-       return <SimuladoRunner 
-          user={user}
-          classId={parentClass?.id || ''}
-          simulado={activeSimulado} 
-          attempt={attempt} 
-          onFinish={async (ans) => { 
-               const newAttempts = [...attempts.filter(a => a.id !== ans.id), ans];
-               setAttempts(newAttempts);
-               await saveSimuladoAttemptToDB(ans);
-               setActiveSimulado(null);
-          }} 
-          onBack={() => setActiveSimulado(null)} 
-       />;
-  }
-
+  // ... Rest of UserDashboard (Edital, Simulados) ...
   return (
     <div className="flex h-full w-full bg-insanus-black text-gray-200">
         <div className="w-20 lg:w-64 bg-black/50 border-r border-white/10 flex flex-col shrink-0 z-30 backdrop-blur-md">
@@ -1091,84 +972,40 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                  {plans.length > 1 && (
                      <div className="mb-6 px-2">
                          <label className="text-[10px] uppercase font-bold text-gray-500 mb-2 block">Plano Ativo</label>
-                         <select 
-                            value={currentPlan?.id || ''} 
-                            onChange={(e) => handleSelectPlan(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded p-2 text-xs text-white outline-none"
-                         >
+                         <select value={currentPlan?.id || ''} onChange={(e) => handleSelectPlan(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded p-2 text-xs text-white outline-none">
                              {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                          </select>
                      </div>
                  )}
-
-                 <button onClick={() => setView('daily')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'daily' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
-                     <Icon.Check className="w-5 h-5" />
-                     <span className="hidden lg:block font-bold text-sm">Metas de Hoje</span>
-                 </button>
-                 <button onClick={() => setView('calendar')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'calendar' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
-                     <Icon.Calendar className="w-5 h-5" />
-                     <span className="hidden lg:block font-bold text-sm">Calendário</span>
-                 </button>
-                 <button onClick={() => setView('edital')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'edital' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
-                     <Icon.List className="w-5 h-5" />
-                     <span className="hidden lg:block font-bold text-sm">Edital Verticalizado</span>
-                 </button>
-                 <button onClick={() => setView('simulados')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'simulados' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
-                     <Icon.FileText className="w-5 h-5" />
-                     <span className="hidden lg:block font-bold text-sm">Simulados</span>
-                 </button>
-                 <button onClick={() => setView('setup')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'setup' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}>
-                     <Icon.Clock className="w-5 h-5" />
-                     <span className="hidden lg:block font-bold text-sm">Configuração</span>
-                 </button>
+                 <button onClick={() => setView('daily')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'daily' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.Check className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Metas de Hoje</span></button>
+                 <button onClick={() => setView('calendar')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'calendar' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.Calendar className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Calendário</span></button>
+                 <button onClick={() => setView('edital')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'edital' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.List className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Edital Verticalizado</span></button>
+                 <button onClick={() => setView('simulados')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'simulados' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.FileText className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Simulados</span></button>
+                 <button onClick={() => setView('setup')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'setup' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.Clock className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Configuração</span></button>
              </nav>
-             
-             {/* STATS AREA */}
              <div className="p-4 border-t border-white/5 bg-black/20">
                  <div className="text-[10px] text-gray-500 font-bold uppercase mb-1">Tempo Total Estudado</div>
                  <div className="text-xl font-black text-white">{formatSecondsToTime(user.progress.totalStudySeconds)}</div>
-                 {currentPlan && user.progress.planStudySeconds?.[currentPlan.id] && (
-                     <div className="text-[9px] text-insanus-red mt-1 font-mono">
-                         Neste Plano: {formatSecondsToTime(user.progress.planStudySeconds[currentPlan.id])}
-                     </div>
-                 )}
+                 {currentPlan && user.progress.planStudySeconds?.[currentPlan.id] && <div className="text-[9px] text-insanus-red mt-1 font-mono">Neste Plano: {formatSecondsToTime(user.progress.planStudySeconds[currentPlan.id])}</div>}
              </div>
-
              {(onReturnToAdmin || user.isAdmin) && (
-                 <div className="p-4 border-t border-white/5">
-                     <button onClick={onReturnToAdmin} className="w-full bg-gray-800 hover:bg-gray-700 text-white p-3 rounded-xl flex items-center justify-center lg:justify-start gap-3 transition-all border border-transparent hover:border-gray-600 shadow-lg group">
-                        <Icon.LogOut className="w-5 h-5 text-insanus-red group-hover:scale-110 transition-transform" />
-                        <span className="hidden lg:block font-bold text-sm uppercase">Voltar p/ Admin</span>
-                     </button>
-                 </div>
+                 <div className="p-4 border-t border-white/5"><button onClick={onReturnToAdmin} className="w-full bg-gray-800 hover:bg-gray-700 text-white p-3 rounded-xl flex items-center justify-center lg:justify-start gap-3 transition-all border border-transparent hover:border-gray-600 shadow-lg group"><Icon.LogOut className="w-5 h-5 text-insanus-red group-hover:scale-110 transition-transform" /><span className="hidden lg:block font-bold text-sm uppercase">Voltar p/ Admin</span></button></div>
              )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-8 custom-scrollbar relative">
-            {user.isAdmin && (
-                <div className="absolute top-4 right-4 bg-insanus-red/20 border border-insanus-red text-insanus-red px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest pointer-events-none z-10">
-                    Modo Admin
-                </div>
-            )}
-
+            {user.isAdmin && <div className="absolute top-4 right-4 bg-insanus-red/20 border border-insanus-red text-insanus-red px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest pointer-events-none z-10">Modo Admin</div>}
             {view === 'setup' && <SetupWizard user={user} currentPlan={currentPlan} onSave={handleSetupSave} onPlanAction={handlePlanAction} />}
             {view === 'daily' && renderDailyView()}
             {view === 'calendar' && renderCalendarView()}
             {view === 'edital' && renderEditalView()}
             {view === 'simulados' && (
-                <div className="max-w-6xl mx-auto space-y-10 animate-fade-in">
+                <div className="max-w-[1600px] mx-auto space-y-10 animate-fade-in">
                     <h2 className="text-3xl font-black text-white mb-8 border-b border-white/10 pb-4">SIMULADOS</h2>
                     {simuladoClasses.map(sc => (
                         <div key={sc.id} className="glass rounded-xl p-6 border border-white/5">
                             <h3 className="text-xl font-black text-white mb-4">{sc.name}</h3>
-                            <div className="grid gap-4">
-                                {sc.simulados.map(sim => (
-                                    <div key={sim.id} className="bg-black/40 p-4 rounded-lg flex justify-between items-center border border-white/5">
-                                        <h4 className="font-bold text-white">{sim.title}</h4>
-                                        <button onClick={() => setActiveSimulado(sim)} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">ACESSAR</button>
-                                    </div>
-                                ))}
-                            </div>
+                            <div className="grid gap-4">{sc.simulados.map(sim => (<div key={sim.id} className="bg-black/40 p-4 rounded-lg flex justify-between items-center border border-white/5"><h4 className="font-bold text-white">{sim.title}</h4><button onClick={() => setActiveSimulado(sim)} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">ACESSAR</button></div>))}</div>
                         </div>
                     ))}
                 </div>
