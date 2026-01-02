@@ -41,6 +41,81 @@ const SafeDeleteBtn: React.FC<SafeDeleteBtnProps> = ({ onDelete, label = "", cla
     );
 };
 
+// --- SUB-COMPONENT: EMBED MODAL ---
+interface EmbedModalProps {
+    onClose: () => void;
+}
+
+const EmbedModal: React.FC<EmbedModalProps> = ({ onClose }) => {
+    const appUrl = window.location.origin;
+    // Generated iframe code - Responsive width/height
+    const embedCode = `<iframe 
+  src="${appUrl}" 
+  width="100%" 
+  height="800" 
+  style="border: none; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; min-height: 100vh;" 
+  allow="fullscreen" 
+  title="Insanus Planner">
+</iframe>`;
+
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = () => {
+        navigator.clipboard.writeText(embedCode);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+        <div className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-[#121212] border border-[#333] p-8 rounded-2xl w-full max-w-2xl relative shadow-2xl">
+                <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-white transition">
+                    <Icon.LogOut className="w-6 h-6"/>
+                </button>
+
+                <div className="mb-6 flex items-center gap-4">
+                    <div className="w-12 h-12 bg-insanus-red/10 rounded-full flex items-center justify-center border border-insanus-red/30">
+                        <Icon.Share2 className="w-6 h-6 text-insanus-red"/>
+                    </div>
+                    <div>
+                        <h3 className="text-2xl font-black text-white uppercase tracking-tight">Código Embed</h3>
+                        <p className="text-sm text-gray-400">Incorpore o sistema em sites externos ou plataformas LMS.</p>
+                    </div>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="bg-[#1E1E1E] p-4 rounded-xl border border-[#333]">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2">HTML Iframe (Responsivo)</label>
+                        <div className="relative">
+                            <textarea 
+                                readOnly 
+                                value={embedCode}
+                                className="w-full h-32 bg-black border border-white/10 rounded-lg p-3 text-xs font-mono text-green-400 focus:outline-none resize-none"
+                            />
+                            <button 
+                                onClick={handleCopy} 
+                                className={`absolute top-2 right-2 px-3 py-1.5 rounded-md text-xs font-bold uppercase transition flex items-center gap-2 ${copied ? 'bg-green-600 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                            >
+                                {copied ? <Icon.Check className="w-3 h-3"/> : <Icon.Copy className="w-3 h-3"/>}
+                                {copied ? 'Copiado!' : 'Copiar'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl">
+                        <h4 className="text-blue-400 font-bold text-xs uppercase mb-2 flex items-center gap-2"><Icon.Code className="w-4 h-4"/> Instruções de Uso</h4>
+                        <p className="text-gray-400 text-xs leading-relaxed">
+                            1. Copie o código acima.<br/>
+                            2. Cole no HTML do seu site, Elementor (Wordpress), ou área de "Código Embed" da sua plataforma.<br/>
+                            3. O sistema se ajustará automaticamente à largura da página (Responsivo).
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 // --- SUB-COMPONENT: USER FORM MODAL (CREATE/EDIT) ---
 interface UserFormModalProps {
     initialUser?: User | null;
@@ -136,7 +211,7 @@ const UserFormModal: React.FC<UserFormModalProps> = ({ initialUser, onSave, onCa
     )
 }
 
-// ... [Rest of AdminDashboard code remains exactly the same] ...
+// ... [Rest of AdminDashboard code remains exactly the same until AdminDashboard component] ...
 // --- SUB-COMPONENT: EDITAL TOPIC EDITOR ---
 interface EditalTopicEditorProps {
     topic: EditalTopic;
@@ -715,7 +790,7 @@ const SimuladoEditor: React.FC<SimuladoEditorProps> = ({ simClass, onUpdate, onB
     );
 };
 
-// --- PLAN DETAIL EDITOR ---
+// ... [PlanDetailEditor remains same] ...
 interface PlanDetailEditorProps {
     plan: StudyPlan;
     onUpdate: (p: StudyPlan) => void;
@@ -1136,6 +1211,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onSwitchTo
     const [editingClass, setEditingClass] = useState<SimuladoClass | null>(null);
     const [isCreatingUser, setIsCreatingUser] = useState(false);
     const [userToEdit, setUserToEdit] = useState<User | null>(null);
+    
+    // Embed Modal State
+    const [showEmbedModal, setShowEmbedModal] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -1378,6 +1456,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onSwitchTo
                 />
             )}
 
+            {/* Embed Modal Layer */}
+            {showEmbedModal && (
+                <EmbedModal onClose={() => setShowEmbedModal(false)} />
+            )}
+
             {/* Sidebar with Solid Dark Background - ALWAYS VISIBLE TO MAINTAIN STRUCTURE */}
             <aside className="w-64 bg-[#0F0F0F] border-r border-[#333] flex flex-col shrink-0 z-20">
                 <div className="p-6 border-b border-[#333]">
@@ -1395,6 +1478,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onSwitchTo
                     </button>
                     <button onClick={() => { setEditingPlan(null); setEditingClass(null); setView('SIMULADOS'); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${view === 'SIMULADOS' && !editingPlan && !editingClass ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
                         <Icon.Code className="w-4 h-4"/> TURMAS DE SIMULADOS
+                    </button>
+
+                    <div className="my-4 border-t border-[#333]"></div>
+                    <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest px-2 mb-2">Ferramentas</p>
+                    <button onClick={() => setShowEmbedModal(true)} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all text-blue-400 hover:text-white hover:bg-blue-900/20 border border-transparent hover:border-blue-500/30">
+                        <Icon.Share2 className="w-4 h-4"/> INCORPORAR / EMBED
                     </button>
                 </nav>
 

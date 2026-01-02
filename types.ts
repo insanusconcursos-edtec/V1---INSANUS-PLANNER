@@ -9,6 +9,7 @@ export interface PlanConfig {
 export interface User {
   id: string;
   name: string;
+  nickname?: string; // NEW: Apelido para o Ranking
   email: string;
   cpf: string;
   level: UserLevel;

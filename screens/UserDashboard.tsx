@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { User, StudyPlan, Routine, Goal, SubGoal, UserProgress, GoalType, PlanConfig, Discipline, Subject, UserLevel, SimuladoClass, Simulado, SimuladoAttempt, ScheduledItem, EditalTopic, Cycle, CycleItem } from '../types';
 import { Icon } from '../components/Icons';
 import { WEEKDAYS, calculateGoalDuration, uuid } from '../constants';
-import { fetchPlansFromDB, saveUserToDB, fetchSimuladoClassesFromDB, fetchSimuladoAttemptsFromDB, saveSimuladoAttemptToDB } from '../services/db';
+import { fetchPlansFromDB, saveUserToDB, fetchSimuladoClassesFromDB, fetchSimuladoAttemptsFromDB, saveSimuladoAttemptToDB, fetchUsersFromDB } from '../services/db';
 
 interface Props {
   user: User;
@@ -65,11 +65,13 @@ interface SimuladoRunnerProps {
     classId: string;
     simulado: Simulado;
     attempt?: SimuladoAttempt;
+    allAttempts: SimuladoAttempt[];
+    allUsersMap: Record<string, User>;
     onFinish: (result: SimuladoAttempt) => void;
     onBack: () => void;
 }
 
-const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado, attempt, onFinish, onBack }) => {
+const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado, attempt, allAttempts, allUsersMap, onFinish, onBack }) => {
     const [answers, setAnswers] = useState<Record<number, string | null>>(attempt?.answers || {});
     const [showResult, setShowResult] = useState(!!attempt);
     const [confirmFinish, setConfirmFinish] = useState(false);
@@ -115,135 +117,288 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
         };
 
         onFinish(result);
+        setShowResult(true);
+        setConfirmFinish(false);
     };
 
+    // Calculate Ranking
+    const ranking = React.useMemo(() => {
+        if (!showResult) return [];
+        
+        // Filter attempts for this simulado
+        const relevantAttempts = allAttempts.filter(a => a.simuladoId === simulado.id);
+        
+        // If current attempt is not in allAttempts (freshly finished), add it for ranking
+        // Note: We check if it's already there to avoid duplicates
+        let finalAttempts = [...relevantAttempts];
+        if (attempt && !finalAttempts.some(a => a.id === attempt.id)) {
+            finalAttempts.push(attempt);
+        }
+        
+        // Ensure unique per user (take best score)
+        const best: Record<string, SimuladoAttempt> = {};
+        finalAttempts.forEach(a => {
+            const existing = best[a.userId];
+            if (!existing || a.score > existing.score) {
+                best[a.userId] = a;
+            }
+        });
+
+        // Convert to array and sort
+        return Object.values(best)
+            .sort((a, b) => b.score - a.score)
+            .map((a, index) => {
+                const u = allUsersMap[a.userId];
+                // DISPLAY NAME LOGIC: Nickname > First Name + Initial > Unknown
+                let displayName = 'Usuário Desconhecido';
+                if (u) {
+                    if (u.nickname && u.nickname.trim() !== '') {
+                        displayName = u.nickname;
+                    } else {
+                        const parts = u.name.split(' ');
+                        displayName = parts[0] + (parts.length > 1 ? ' ' + parts[1].charAt(0) + '.' : '');
+                    }
+                }
+
+                return {
+                    rank: index + 1,
+                    userId: a.userId,
+                    name: displayName,
+                    score: a.score,
+                    isCurrentUser: a.userId === user.id
+                };
+            });
+    }, [showResult, allAttempts, simulado.id, attempt, user.id, allUsersMap]);
+
     return (
-        <div className="fixed inset-0 z-50 bg-[#050505] text-white flex flex-col animate-fade-in">
-             <div className="h-16 border-b border-[#333] bg-[#0F0F0F] flex items-center justify-between px-6 shrink-0">
+        <div className="w-full flex flex-col animate-fade-in pb-10">
+             {/* Sub-header for Simulado context */}
+             <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#333]">
                 <div className="flex items-center gap-4">
-                    <button onClick={onBack} className="text-gray-500 hover:text-white flex items-center gap-2">
-                        <Icon.ArrowUp className="-rotate-90 w-5 h-5" /> <span className="text-xs font-bold uppercase">Sair</span>
+                    <button onClick={onBack} className="text-gray-500 hover:text-white flex items-center gap-2 transition">
+                        <Icon.ArrowUp className="-rotate-90 w-5 h-5" /> <span className="text-xs font-bold uppercase">Sair do Simulado</span>
                     </button>
                     <div className="h-6 w-px bg-[#333]"></div>
-                    <h2 className="font-bold uppercase text-lg">{simulado.title}</h2>
+                    <h2 className="font-bold uppercase text-xl text-white">{simulado.title}</h2>
                 </div>
                 {!showResult && (
-                    <button 
-                        onClick={() => setConfirmFinish(true)}
-                        className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded font-bold text-xs uppercase shadow-neon"
-                    >
-                        Finalizar Simulado
-                    </button>
+                    <div className="flex gap-2">
+                        {/* Timer could go here */}
+                    </div>
                 )}
              </div>
 
+             {/* Resources Section - Replaces the iframe */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                {/* Caderno de Questões */}
+                <div className="bg-[#121212] p-6 rounded-xl border border-[#333] flex flex-col items-center justify-center text-center gap-4 hover:border-white/20 transition group">
+                    <div className="w-12 h-12 bg-insanus-red/10 rounded-full flex items-center justify-center group-hover:scale-110 transition">
+                        <Icon.Book className="w-6 h-6 text-insanus-red" />
+                    </div>
+                    <div>
+                        <h3 className="text-white font-bold uppercase text-sm">Material do Simulado</h3>
+                        <p className="text-gray-500 text-xs mt-1">Baixe o PDF para resolver as questões.</p>
+                    </div>
+                    {simulado.pdfUrl ? (
+                        <a 
+                            href={simulado.pdfUrl} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-6 py-2 rounded-lg text-xs font-bold uppercase transition flex items-center gap-2 shadow-lg"
+                        >
+                            <Icon.Maximize className="w-4 h-4"/> BAIXAR CADERNO DE QUESTÕES
+                        </a>
+                    ) : (
+                        <span className="text-red-500 text-xs font-bold bg-red-900/10 px-3 py-1 rounded">PDF Indisponível</span>
+                    )}
+                </div>
+
+                {/* Gabarito - Only show if finished/result available */}
+                <div className={`bg-[#121212] p-6 rounded-xl border border-[#333] flex flex-col items-center justify-center text-center gap-4 transition group ${!showResult ? 'opacity-50 grayscale' : 'hover:border-white/20'}`}>
+                    <div className="w-12 h-12 bg-green-500/10 rounded-full flex items-center justify-center group-hover:scale-110 transition">
+                        <Icon.Check className="w-6 h-6 text-green-500" />
+                    </div>
+                    <div>
+                        <h3 className="text-white font-bold uppercase text-sm">Gabarito Comentado</h3>
+                        <p className="text-gray-500 text-xs mt-1">{showResult ? 'Visualize as respostas e comentários.' : 'Disponível após finalizar o simulado.'}</p>
+                    </div>
+                    {simulado.gabaritoPdfUrl && showResult ? (
+                        <a 
+                            href={simulado.gabaritoPdfUrl} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="bg-green-600/20 hover:bg-green-600/30 text-green-500 border border-green-600/50 px-6 py-2 rounded-lg text-xs font-bold uppercase transition flex items-center gap-2 shadow-lg"
+                        >
+                            <Icon.Maximize className="w-4 h-4"/> ABRIR GABARITO
+                        </a>
+                    ) : (
+                        <button disabled className="bg-black/20 text-gray-600 border border-white/5 px-6 py-2 rounded-lg text-xs font-bold uppercase cursor-not-allowed flex items-center gap-2">
+                            <Icon.EyeOff className="w-4 h-4"/> {showResult ? 'GABARITO INDISPONÍVEL' : 'BLOQUEADO'}
+                        </button>
+                    )}
+                </div>
+             </div>
+
              {confirmFinish && (
-                 <div className="absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
-                     <div className="bg-[#121212] border border-[#333] p-8 rounded-xl max-w-sm w-full text-center">
-                         <h3 className="text-xl font-bold text-white mb-2">Tem certeza?</h3>
-                         <p className="text-gray-400 text-sm mb-6">Ao finalizar, você não poderá alterar suas respostas.</p>
+                 <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4">
+                     <div className="bg-[#121212] border border-[#333] p-8 rounded-xl max-w-sm w-full text-center shadow-neon">
+                         <h3 className="text-xl font-bold text-white mb-2">Finalizar Simulado?</h3>
+                         <p className="text-gray-400 text-sm mb-6">Confira se marcou todas as respostas no gabarito digital abaixo.</p>
                          <div className="flex gap-4">
-                             <button onClick={() => setConfirmFinish(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded font-bold text-xs">VOLTAR</button>
-                             <button onClick={finishSimulado} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded font-bold text-xs">CONFIRMAR</button>
+                             <button onClick={() => setConfirmFinish(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-bold text-xs">VOLTAR</button>
+                             <button onClick={finishSimulado} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded-lg font-bold text-xs shadow-lg">CONFIRMAR</button>
                          </div>
                      </div>
                  </div>
              )}
 
-             <div className="flex-1 flex overflow-hidden">
-                {simulado.pdfUrl && (
-                    <div className="w-1/2 border-r border-[#333] bg-[#121212] flex flex-col">
-                        <div className="flex-1 flex items-center justify-center text-gray-500">
-                             <iframe src={simulado.pdfUrl} className="w-full h-full" title="PDF Viewer"></iframe>
-                        </div>
-                    </div>
-                )}
-
-                <div className={`${simulado.pdfUrl ? 'w-1/2' : 'w-full'} flex flex-col bg-[#050505]`}>
-                    <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-                         {attempt && (
-                             <div className={`p-4 rounded-xl border mb-8 flex justify-between items-center ${attempt.isApproved ? 'bg-green-900/20 border-green-600' : 'bg-red-900/20 border-red-600'}`}>
-                                 <div>
-                                     <h3 className={`text-xl font-black ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'}</h3>
-                                     <p className="text-xs text-gray-400">Pontuação Final: {attempt.score}</p>
-                                 </div>
-                                 <button onClick={onBack} className="text-white text-xs underline">Voltar ao Painel</button>
+             <div className="flex-1 flex flex-col bg-[#050505]">
+                {/* Result Header */}
+                {showResult && attempt && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                         <div className={`p-6 rounded-xl border flex flex-col justify-between ${attempt.isApproved ? 'bg-green-900/10 border-green-600/50' : 'bg-red-900/10 border-red-600/50'}`}>
+                             <div>
+                                 <h3 className={`text-2xl font-black ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'}</h3>
+                                 <p className="text-sm text-gray-300 mt-2">Sua pontuação líquida: <span className="font-bold text-white text-xl ml-1">{attempt.score} pontos</span></p>
                              </div>
-                         )}
+                             <div className="mt-4">
+                                 <p className="text-xs text-gray-500">Data da realização: {formatDate(attempt.date)}</p>
+                             </div>
+                         </div>
 
-                         <div className="space-y-6">
-                            {Array.from({ length: simulado.totalQuestions }).map((_, i) => {
-                                const qNum = i + 1;
-                                const userAns = answers[qNum];
-                                const correctAns = showResult ? simulado.correctAnswers[qNum] : null;
-                                const isCorrect = showResult && userAns === correctAns;
-                                
-                                return (
-                                    <div key={qNum} className="bg-[#121212] p-4 rounded-xl border border-[#333]">
-                                        <div className="flex justify-between mb-4">
-                                            <span className="font-bold text-insanus-red">QUESTÃO {qNum}</span>
-                                            {showResult && (
-                                                <span className={`text-xs font-bold ${isCorrect ? 'text-green-500' : 'text-red-500'}`}>
-                                                    {isCorrect ? 'ACERTOU' : userAns ? `ERROU (Gab: ${correctAns})` : `EM BRANCO (Gab: ${correctAns})`}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="flex gap-2 flex-wrap">
-                                            {simulado.type === 'MULTIPLA_ESCOLHA' ? (
-                                                ['A','B','C','D','E'].slice(0, simulado.optionsCount).map(opt => (
-                                                    <button 
-                                                        key={opt}
-                                                        onClick={() => handleAnswer(qNum, opt)}
-                                                        disabled={showResult}
-                                                        className={`w-10 h-10 rounded font-bold transition-all ${
-                                                            userAns === opt 
-                                                                ? 'bg-white text-black shadow-[0_0_10px_white]' 
-                                                                : 'bg-black border border-[#333] text-gray-400 hover:border-white'
-                                                        } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
-                                                    >
-                                                        {opt}
-                                                    </button>
-                                                ))
-                                            ) : (
-                                                ['C','E'].map(opt => (
-                                                    <button 
-                                                        key={opt}
-                                                        onClick={() => handleAnswer(qNum, opt)}
-                                                        disabled={showResult}
-                                                        className={`flex-1 py-2 rounded font-bold transition-all ${
-                                                            userAns === opt 
-                                                                ? 'bg-white text-black' 
-                                                                : 'bg-black border border-[#333] text-gray-400 hover:border-white'
-                                                        } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
-                                                    >
-                                                        {opt === 'C' ? 'CERTO' : 'ERRADO'}
-                                                    </button>
-                                                ))
-                                            )}
-                                        </div>
-                                    </div>
-                                )
-                            })}
+                         {/* RANKING SECTION */}
+                         <div className="bg-[#121212] border border-[#333] rounded-xl overflow-hidden flex flex-col">
+                             <div className="bg-[#1E1E1E] p-3 border-b border-[#333] flex justify-between items-center">
+                                <h4 className="text-sm font-bold text-white uppercase flex items-center gap-2"><Icon.List className="w-4 h-4 text-yellow-500"/> Ranking Geral</h4>
+                                <span className="text-[10px] text-gray-500">{ranking.length} Alunos</span>
+                             </div>
+                             <div className="flex-1 overflow-y-auto custom-scrollbar max-h-[200px]">
+                                 <table className="w-full text-left border-collapse">
+                                     <thead className="bg-black text-[10px] text-gray-500 font-bold uppercase sticky top-0">
+                                         <tr>
+                                             <th className="p-2 pl-4">Pos</th>
+                                             <th className="p-2">Aluno</th>
+                                             <th className="p-2 text-right pr-4">Nota</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {ranking.map((r) => (
+                                             <tr key={r.userId} className={`border-b border-[#222] text-xs ${r.isCurrentUser ? 'bg-insanus-red/10' : ''}`}>
+                                                 <td className="p-2 pl-4 font-bold text-gray-400">
+                                                     {r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `${r.rank}º`}
+                                                 </td>
+                                                 <td className={`p-2 font-bold ${r.isCurrentUser ? 'text-insanus-red' : 'text-white'}`}>
+                                                     {r.name}
+                                                     {r.isCurrentUser && ' (Você)'}
+                                                 </td>
+                                                 <td className="p-2 text-right pr-4 font-mono font-bold text-white">{r.score}</td>
+                                             </tr>
+                                         ))}
+                                     </tbody>
+                                 </table>
+                             </div>
                          </div>
                     </div>
-                </div>
+                 )}
+
+                 <div className="bg-[#121212] rounded-xl border border-[#333] p-6">
+                    <h3 className="text-white font-bold uppercase mb-6 flex items-center gap-2"><Icon.List className="w-5 h-5 text-insanus-red"/> Gabarito Digital</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {Array.from({ length: simulado.totalQuestions }).map((_, i) => {
+                            const qNum = i + 1;
+                            const userAns = answers[qNum];
+                            const correctAns = showResult ? simulado.correctAnswers[qNum] : null;
+                            const isCorrect = showResult && userAns === correctAns;
+                            
+                            return (
+                                <div key={qNum} className="flex flex-col gap-2 p-3 rounded bg-[#1A1A1A] border border-[#333]">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-xs font-bold text-gray-400">Q{qNum}</span>
+                                        {showResult && (
+                                            <span className={`text-[10px] font-bold ${isCorrect ? 'text-green-500' : 'text-red-500'}`}>
+                                                {isCorrect ? 'ACERTOU' : userAns ? `GAB: ${correctAns}` : `GAB: ${correctAns}`}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex gap-1 justify-center">
+                                        {simulado.type === 'MULTIPLA_ESCOLHA' ? (
+                                            ['A','B','C','D','E'].slice(0, simulado.optionsCount).map(opt => (
+                                                <button 
+                                                    key={opt}
+                                                    onClick={() => handleAnswer(qNum, opt)}
+                                                    disabled={showResult}
+                                                    className={`w-8 h-8 rounded text-[10px] font-bold transition-all ${
+                                                        userAns === opt 
+                                                            ? 'bg-white text-black shadow-neon' 
+                                                            : 'bg-black border border-[#333] text-gray-500 hover:border-white/50'
+                                                    } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
+                                                >
+                                                    {opt}
+                                                </button>
+                                            ))
+                                        ) : (
+                                            ['C','E'].map(opt => (
+                                                <button 
+                                                    key={opt}
+                                                    onClick={() => handleAnswer(qNum, opt)}
+                                                    disabled={showResult}
+                                                    className={`flex-1 h-8 rounded text-[10px] font-bold transition-all ${
+                                                        userAns === opt 
+                                                            ? 'bg-white text-black' 
+                                                            : 'bg-black border border-[#333] text-gray-500 hover:border-white/50'
+                                                    } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
+                                                >
+                                                    {opt}
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                 </div>
+
+                 {/* SUBMIT BUTTON AT THE BOTTOM */}
+                 {!showResult && (
+                     <div className="mt-8">
+                         <button 
+                             onClick={() => setConfirmFinish(true)}
+                             className="w-full bg-insanus-red hover:bg-red-700 text-white py-4 rounded-xl font-black text-sm uppercase shadow-neon transition-all transform hover:scale-[1.01] flex items-center justify-center gap-2"
+                         >
+                             <Icon.Check className="w-5 h-5"/> FINALIZAR E ENVIAR RESPOSTAS
+                         </button>
+                     </div>
+                 )}
              </div>
         </div>
     );
 };
 
 // ... [SetupWizard and Schedule Engine] ...
-const SetupWizard = ({ user, currentPlan, onSave, onPlanAction, onUpdateUser }: { user: User, currentPlan: StudyPlan | null, onSave: (r: Routine, l: UserLevel) => void, onPlanAction: (action: 'pause' | 'reschedule') => void, onUpdateUser: (u: User) => void }) => {
+const SetupWizard = ({ user, allPlans, currentPlan, onSave, onPlanAction, onUpdateUser, onSelectPlan }: { user: User, allPlans: StudyPlan[], currentPlan: StudyPlan | null, onSave: (r: Routine, l: UserLevel) => void, onPlanAction: (action: 'pause' | 'reschedule' | 'restart') => void, onUpdateUser: (u: User) => void, onSelectPlan: (id: string) => void }) => {
     const [days, setDays] = useState(user.routine?.days || {});
     const [level, setLevel] = useState<UserLevel>(user.level || 'iniciante');
+    const [nickname, setNickname] = useState(user.nickname || ''); // State for nickname
     
     // Password Change State
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [changingPass, setChangingPass] = useState(false);
+    
+    // Restart Confirmation
+    const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
     const handleDayChange = (key: string, val: string) => {
         setDays(prev => ({ ...prev, [key]: parseInt(val) || 0 }));
+    };
+
+    const handleSaveProfile = async () => {
+        if (nickname.length > 20) return alert("Apelido muito longo (máx 20 caracteres)");
+        const updatedUser = { ...user, nickname: nickname.trim() };
+        onUpdateUser(updatedUser);
+        await saveUserToDB(updatedUser);
+        alert("Apelido atualizado!");
     };
 
     const handleChangePassword = async () => {
@@ -270,12 +425,84 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction, onUpdateUser }: 
 
     return (
         <div className="w-full space-y-8 animate-fade-in mt-4">
+            
+            {/* PLAN SELECTION SECTION */}
+            <div className="bg-[#121212] p-8 rounded-2xl border border-[#333]">
+                <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2 border-b border-[#333] pb-4">
+                    <Icon.Book className="w-5 h-5 text-insanus-red"/> MEUS PLANOS DISPONÍVEIS
+                </h3>
+                {allPlans.length === 0 ? (
+                    <div className="text-gray-500 italic text-sm">Nenhum plano liberado para sua conta. Contate o suporte.</div>
+                ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {allPlans.map(plan => {
+                            const isActive = currentPlan?.id === plan.id;
+                            const isPaused = user.planConfigs?.[plan.id]?.isPaused;
+                            
+                            return (
+                                <div 
+                                    key={plan.id} 
+                                    className={`relative rounded-xl border-2 overflow-hidden transition-all group flex flex-col h-full bg-[#0F0F0F] ${isActive ? 'border-insanus-red shadow-neon transform scale-[1.02]' : 'border-[#333] hover:border-gray-500'}`}
+                                >
+                                    {/* Cover Image - Square Aspect Ratio for 1080x1080 */}
+                                    <div className="aspect-square w-full bg-gray-800 relative overflow-hidden border-b border-[#333]">
+                                        {plan.coverImage ? (
+                                            <img src={plan.coverImage} alt={plan.name} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" />
+                                        ) : (
+                                            <div className="flex items-center justify-center h-full w-full bg-gradient-to-br from-gray-800 to-black">
+                                                <Icon.Image className="w-12 h-12 text-gray-600"/>
+                                            </div>
+                                        )}
+                                        {/* Badges */}
+                                        <div className="absolute top-2 right-2 flex gap-1">
+                                            {isActive && (
+                                                <span className="bg-insanus-red text-white text-[8px] font-black px-2 py-1 rounded uppercase tracking-wider shadow-sm">
+                                                    {isPaused ? 'PAUSADO' : 'ATIVO'}
+                                                </span>
+                                            )}
+                                            {!isActive && (
+                                                <span className="bg-black/60 backdrop-blur-sm text-gray-300 border border-white/10 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-wider">
+                                                    DISPONÍVEL
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Content */}
+                                    <div className="p-3 flex-1 flex flex-col">
+                                        <div className="mb-2">
+                                            <span className="text-[9px] text-gray-500 font-bold uppercase block mb-1 truncate">{(plan.category || 'GERAL').replace(/_/g, ' ')}</span>
+                                            <h4 className={`font-black text-sm leading-tight line-clamp-2 ${isActive ? 'text-white' : 'text-gray-300'}`}>{plan.name}</h4>
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-2 mt-auto pt-2">
+                                            {isActive ? (
+                                                <div className="w-full text-center py-2 bg-insanus-red/10 border border-insanus-red rounded text-insanus-red text-[10px] font-bold uppercase">
+                                                    SELECIONADO
+                                                </div>
+                                            ) : (
+                                                <button 
+                                                    onClick={() => onSelectPlan(plan.id)}
+                                                    className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 rounded text-gray-300 hover:text-white text-[10px] font-bold uppercase transition flex items-center justify-center gap-2"
+                                                >
+                                                    ESCOLHER
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
+            </div>
+
             {currentPlan && (
                 <div className="bg-[#121212] p-6 rounded-2xl border border-[#333] relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-insanus-red"></div>
-                    <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Icon.Edit className="w-5 h-5"/> GESTÃO DO PLANO ATUAL</h3>
+                    <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Icon.Edit className="w-5 h-5"/> GESTÃO DO PLANO ATUAL ({currentPlan.name})</h3>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <div className="bg-[#1E1E1E] p-4 rounded-xl border border-[#333]">
                             <h4 className="font-bold text-gray-300 text-sm mb-2">STATUS DO PLANO</h4>
                             <p className="text-xs text-gray-500 mb-4">Pausar o plano interrompe a geração de novas metas diárias até que você retorne.</p>
@@ -300,6 +527,19 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction, onUpdateUser }: 
                             >
                                 <Icon.RefreshCw className="w-4 h-4"/>
                                 REPLANEJAR ATRASOS
+                            </button>
+                        </div>
+
+                        <div className="bg-red-900/10 p-4 rounded-xl border border-red-900/30 flex flex-col justify-between">
+                            <div>
+                                <h4 className="font-bold text-red-500 text-sm mb-2 flex items-center gap-2"><Icon.Trash className="w-4 h-4"/> ZONA DE PERIGO</h4>
+                                <p className="text-xs text-red-400 mb-4">Deseja recomeçar do zero? Isso apagará o progresso deste plano.</p>
+                            </div>
+                            <button 
+                                onClick={() => setShowRestartConfirm(true)}
+                                className="w-full py-3 bg-transparent border border-red-600 text-red-500 hover:bg-red-600 hover:text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition"
+                            >
+                                REINICIAR PLANO
                             </button>
                         </div>
                     </div>
@@ -366,6 +606,32 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction, onUpdateUser }: 
                 <button onClick={() => onSave({ days }, level)} className="w-full mt-10 bg-insanus-red hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow-neon transition transform hover:scale-[1.01] flex items-center justify-center gap-2">
                     <Icon.RefreshCw className="w-5 h-5"/> SALVAR ROTINA E NÍVEL
                 </button>
+            </div>
+
+            {/* PROFILE SETTINGS SECTION */}
+            <div className="bg-[#121212] p-8 rounded-2xl border border-[#333]">
+                <h3 className="text-lg font-bold text-white mb-6 border-b border-[#333] pb-2 flex items-center gap-2">
+                    <Icon.User className="w-4 h-4 text-insanus-red"/> PERFIL E RANKING
+                </h3>
+                <div className="flex flex-col md:flex-row gap-4 items-end">
+                    <div className="flex-1 w-full">
+                        <label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Apelido (Exibido no Ranking)</label>
+                        <input 
+                            type="text"
+                            value={nickname} 
+                            onChange={e => setNickname(e.target.value)} 
+                            className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" 
+                            placeholder="Como você quer ser visto"
+                            maxLength={20}
+                        />
+                    </div>
+                    <button 
+                        onClick={handleSaveProfile} 
+                        className="bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg border border-gray-700 transition flex items-center justify-center gap-2 shrink-0 h-[46px]"
+                    >
+                        SALVAR PERFIL
+                    </button>
+                </div>
             </div>
 
             {/* PASSWORD CHANGE SECTION */}
@@ -590,7 +856,10 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const [currentPlan, setCurrentPlan] = useState<StudyPlan | null>(null);
   const [schedule, setSchedule] = useState<Record<string, ScheduledItem[]>>({});
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
-  const [editalExpanded, setEditalExpanded] = useState<string[]>([]); // New State for Accordion
+  const [editalExpanded, setEditalExpanded] = useState<string[]>([]);
+  
+  // Plan Switching State
+  const [pendingPlanId, setPendingPlanId] = useState<string | null>(null);
   
   // Timer State
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
@@ -602,6 +871,8 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const [simuladoClasses, setSimuladoClasses] = useState<SimuladoClass[]>([]);
   const [attempts, setAttempts] = useState<SimuladoAttempt[]>([]);
   const [activeSimulado, setActiveSimulado] = useState<Simulado | null>(null);
+  const [allAttempts, setAllAttempts] = useState<SimuladoAttempt[]>([]); // For ranking
+  const [allUsersMap, setAllUsersMap] = useState<Record<string, User>>({}); // For names in ranking
 
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
 
@@ -672,24 +943,68 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
           return isAllowedExplicitly || isLinkedToPlan;
       });
       setSimuladoClasses(userClasses);
-      const allAttempts = await fetchSimuladoAttemptsFromDB();
-      setAttempts(allAttempts.filter(a => a.userId === user.id));
+      
+      // Fetch ALL attempts for Ranking
+      const fetchedAttempts = await fetchSimuladoAttemptsFromDB();
+      setAllAttempts(fetchedAttempts);
+      setAttempts(fetchedAttempts.filter(a => a.userId === user.id)); // Filter for current user view
+
+      // Fetch ALL users for Ranking Names
+      const fetchedUsers = await fetchUsersFromDB();
+      const userMap: Record<string, User> = {};
+      fetchedUsers.forEach(u => userMap[u.id] = u);
+      setAllUsersMap(userMap);
       
       const hasRoutine = user.routine && user.routine.days && Object.values(user.routine.days).some((v: number) => v > 0);
       if (!hasRoutine) setView('setup'); 
   };
 
-  const handleSelectPlan = (planId: string) => {
-      const p = plans.find(pl => pl.id === planId);
-      if (p) {
-          setCurrentPlan(p);
-          const newConfigs = { ...user.planConfigs };
-          if (!newConfigs[p.id]) newConfigs[p.id] = { startDate: getTodayStr(), isPaused: false };
-          const updatedUser = { ...user, currentPlanId: planId, planConfigs: newConfigs };
-          onUpdateUser(updatedUser);
-          saveUserToDB(updatedUser);
-          loadData(); 
+  const initiatePlanSwitch = (newPlanId: string) => {
+      if (newPlanId === currentPlan?.id) return;
+      setPendingPlanId(newPlanId);
+  };
+
+  const confirmPlanSwitch = async () => {
+      if (!pendingPlanId) return;
+      
+      const targetPlan = plans.find(p => p.id === pendingPlanId);
+      if (!targetPlan) return;
+
+      const oldPlanId = currentPlan?.id;
+      const newConfigs = { ...user.planConfigs };
+
+      // 1. Pause Old Plan
+      if (oldPlanId) {
+          newConfigs[oldPlanId] = {
+              ...(newConfigs[oldPlanId] || { startDate: getTodayStr() }),
+              isPaused: true
+          };
       }
+
+      // 2. Initialize or Unpause New Plan
+      if (!newConfigs[pendingPlanId]) {
+          newConfigs[pendingPlanId] = { startDate: getTodayStr(), isPaused: false };
+      } else {
+          newConfigs[pendingPlanId] = {
+              ...newConfigs[pendingPlanId],
+              isPaused: false
+          };
+      }
+
+      // 3. Update User
+      const updatedUser = {
+          ...user,
+          currentPlanId: pendingPlanId,
+          planConfigs: newConfigs
+      };
+
+      setCurrentPlan(targetPlan);
+      onUpdateUser(updatedUser);
+      await saveUserToDB(updatedUser);
+      
+      // 4. Reload Data Context
+      setPendingPlanId(null);
+      loadData(); // Re-fetches appropriate simulado classes etc
   };
 
   const handleSetupSave = async (routine: Routine, level: UserLevel) => {
@@ -705,9 +1020,54 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       setView('daily');
   };
 
-  const handlePlanAction = async (action: 'pause' | 'reschedule') => {
+  const handlePlanAction = async (action: 'pause' | 'reschedule' | 'restart') => {
       if (!currentPlan) return;
       const config = user.planConfigs[currentPlan.id] || { startDate: getTodayStr(), isPaused: false };
+      
+      // LOGIC FOR RESTART
+      if (action === 'restart') {
+          // 1. Get all IDs of goals in this plan
+          const planGoalIds = new Set<string>();
+          currentPlan.disciplines.forEach(d => {
+              d.subjects.forEach(s => {
+                  s.goals.forEach(g => planGoalIds.add(g.id));
+              });
+          });
+
+          // 2. Filter out completed goals that belong to this plan
+          const newCompletedGoals = user.progress.completedGoalIds.filter(id => !planGoalIds.has(id));
+          
+          // 3. Filter revisions (id format: goalId_revIdx)
+          const newCompletedRevisions = user.progress.completedRevisionIds.filter(revId => {
+              const originalGoalId = revId.split('_')[0];
+              return !planGoalIds.has(originalGoalId);
+          });
+
+          // 4. Reset Plan Specific Study Time
+          const newPlanStudySeconds = { ...user.progress.planStudySeconds };
+          newPlanStudySeconds[currentPlan.id] = 0;
+
+          const updatedUser = {
+              ...user,
+              planConfigs: { 
+                  ...user.planConfigs, 
+                  [currentPlan.id]: { startDate: getTodayStr(), isPaused: false } 
+              },
+              progress: {
+                  ...user.progress,
+                  completedGoalIds: newCompletedGoals,
+                  completedRevisionIds: newCompletedRevisions,
+                  planStudySeconds: newPlanStudySeconds
+              }
+          };
+
+          onUpdateUser(updatedUser);
+          await saveUserToDB(updatedUser);
+          alert("Plano reiniciado com sucesso! Boa sorte no recomeço.");
+          return;
+      }
+
+      // LOGIC FOR PAUSE / RESCHEDULE
       let newConfig = { ...config };
       if (action === 'pause') newConfig.isPaused = !newConfig.isPaused;
       else if (action === 'reschedule') {
@@ -763,7 +1123,8 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const handleSimuladoFinished = async (result: SimuladoAttempt) => {
       await saveSimuladoAttemptToDB(result);
       setAttempts(prev => [...prev, result]);
-      setActiveSimulado(null);
+      setAllAttempts(prev => [...prev, result]); // Also update global ranking data locally
+      // setActiveSimulado(null); // Keep open to show result
   };
 
   const toggleAccordion = (uniqueId: string) => {
@@ -771,8 +1132,10 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   }
 
   // --- VIEWS ---
+  // ... [renderDailyView, renderCalendarView, renderEditalView same as before] ...
+
+  // ... [renderDailyView content...]
   const renderDailyView = () => {
-      // ... Daily View Content (No Changes needed here) ...
       const daySchedule = schedule[selectedDate] || [];
       const isToday = selectedDate === getTodayStr();
       const dayName = getDayName(selectedDate);
@@ -1053,7 +1416,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
             </div>
         </div>
     );
-  };
+};
 
   const renderEditalView = () => {
       if (!currentPlan?.editalVerticalizado) return <div className="p-10 text-center text-gray-500">Edital Verticalizado não configurado neste plano.</div>;
@@ -1191,16 +1554,39 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   return (
     <div className="flex flex-col h-full w-full bg-[#050505] text-gray-200">
         {/* ... Rest of UserDashboard JSX ... */}
-        {activeSimulado && (
-            <div className="absolute inset-0 z-[60]">
-                <SimuladoRunner 
-                    user={user} 
-                    classId={activeSimulado ? simuladoClasses.find(c => c.simulados.some(s => s.id === activeSimulado.id))?.id || '' : ''}
-                    simulado={activeSimulado} 
-                    attempt={attempts.find(a => a.simuladoId === activeSimulado.id)}
-                    onFinish={handleSimuladoFinished}
-                    onBack={() => setActiveSimulado(null)}
-                />
+        {/* REMOVED: activeSimulado absolute block from here. It is now handled in the main content area */}
+
+        {/* PLAN SWITCH CONFIRMATION MODAL */}
+        {pendingPlanId && (
+            <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-6 animate-fade-in">
+                <div className="bg-[#121212] border border-[#333] rounded-2xl p-8 max-w-md w-full shadow-2xl relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-insanus-red"></div>
+                    <div className="flex flex-col items-center text-center">
+                        <div className="w-16 h-16 bg-insanus-red/10 rounded-full flex items-center justify-center mb-6 border border-insanus-red/50">
+                            <Icon.RefreshCw className="w-8 h-8 text-insanus-red animate-spin-slow"/>
+                        </div>
+                        <h3 className="text-2xl font-black text-white uppercase mb-2">Trocar de Plano?</h3>
+                        <p className="text-gray-400 text-sm mb-8 leading-relaxed">
+                            Ao confirmar, o plano atual <strong>{currentPlan?.name}</strong> será <span className="text-yellow-500 font-bold">PAUSADO</span>.
+                            <br/><br/>
+                            Seus dados de progresso (metas cumpridas e tempo de estudo) serão salvos automaticamente e você poderá retomar de onde parou quando voltar.
+                        </p>
+                        <div className="flex gap-4 w-full">
+                            <button 
+                                onClick={() => setPendingPlanId(null)} 
+                                className="flex-1 bg-transparent border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 font-bold py-3 rounded-xl text-xs transition uppercase"
+                            >
+                                Cancelar
+                            </button>
+                            <button 
+                                onClick={confirmPlanSwitch} 
+                                className="flex-1 bg-insanus-red hover:bg-red-600 text-white font-bold py-3 rounded-xl text-xs transition shadow-neon uppercase flex items-center justify-center gap-2"
+                            >
+                                Confirmar Troca <Icon.Check className="w-4 h-4"/>
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         )}
 
@@ -1224,11 +1610,6 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
              </div>
              
              <div className="flex items-center gap-4">
-                 {plans.length > 1 && (
-                     <select value={currentPlan?.id || ''} onChange={(e) => handleSelectPlan(e.target.value)} className="bg-black/50 border border-[#333] rounded p-1 text-[10px] text-white outline-none w-32 truncate">
-                         {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                     </select>
-                 )}
                  <div className="text-right hidden md:block">
                      <div className="text-[9px] text-gray-500 font-bold uppercase">Tempo Total</div>
                      <div className="text-xs font-black text-insanus-red font-mono">{formatSecondsToTime(user.progress.totalStudySeconds)}</div>
@@ -1243,32 +1624,48 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
 
         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar relative bg-[#050505]">
             {user.isAdmin && <div className="absolute top-4 right-4 bg-insanus-red/20 border border-insanus-red text-insanus-red px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest pointer-events-none z-10">Modo Admin</div>}
-            {view === 'setup' && <SetupWizard user={user} currentPlan={currentPlan} onSave={handleSetupSave} onPlanAction={handlePlanAction} onUpdateUser={onUpdateUser} />}
-            {view === 'daily' && renderDailyView()}
-            {view === 'calendar' && renderCalendarView()}
-            {view === 'edital' && renderEditalView()}
-            {view === 'simulados' && (
-                <div className="w-full animate-fade-in space-y-10">
-                    <h2 className="text-3xl font-black text-white mb-8 border-b border-[#333] pb-4">SIMULADOS</h2>
-                    {simuladoClasses.map(sc => (
-                        <div key={sc.id} className="bg-[#121212] rounded-xl p-6 border border-[#333]">
-                            <h3 className="text-xl font-black text-white mb-4">{sc.name}</h3>
-                            <div className="grid gap-4">{sc.simulados.map(sim => {
-                                const attempt = attempts.find(a => a.simuladoId === sim.id);
-                                return (
-                                <div key={sim.id} className="bg-black/40 p-4 rounded-lg flex justify-between items-center border border-[#333]">
-                                    <div>
-                                        <h4 className="font-bold text-white">{sim.title}</h4>
-                                        {attempt && <span className={`text-[10px] font-bold ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'} ({attempt.score} pts)</span>}
-                                    </div>
-                                    <button onClick={() => setActiveSimulado(sim)} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">
-                                        {attempt ? 'VER RESULTADO' : 'ACESSAR'}
-                                    </button>
+            
+            {activeSimulado ? (
+                <SimuladoRunner 
+                    user={user} 
+                    classId={activeSimulado ? simuladoClasses.find(c => c.simulados.some(s => s.id === activeSimulado.id))?.id || '' : ''}
+                    simulado={activeSimulado} 
+                    attempt={attempts.find(a => a.simuladoId === activeSimulado.id)}
+                    allAttempts={allAttempts}
+                    allUsersMap={allUsersMap}
+                    onFinish={handleSimuladoFinished}
+                    onBack={() => setActiveSimulado(null)}
+                />
+            ) : (
+                <>
+                    {view === 'setup' && <SetupWizard user={user} allPlans={plans} currentPlan={currentPlan} onSave={handleSetupSave} onPlanAction={handlePlanAction} onUpdateUser={onUpdateUser} onSelectPlan={initiatePlanSwitch} />}
+                    {view === 'daily' && renderDailyView()}
+                    {view === 'calendar' && renderCalendarView()}
+                    {view === 'edital' && renderEditalView()}
+                    {view === 'simulados' && (
+                        <div className="w-full animate-fade-in space-y-10">
+                            <h2 className="text-3xl font-black text-white mb-8 border-b border-[#333] pb-4">SIMULADOS</h2>
+                            {simuladoClasses.map(sc => (
+                                <div key={sc.id} className="bg-[#121212] rounded-xl p-6 border border-[#333]">
+                                    <h3 className="text-xl font-black text-white mb-4">{sc.name}</h3>
+                                    <div className="grid gap-4">{sc.simulados.map(sim => {
+                                        const attempt = attempts.find(a => a.simuladoId === sim.id);
+                                        return (
+                                        <div key={sim.id} className="bg-black/40 p-4 rounded-lg flex justify-between items-center border border-[#333]">
+                                            <div>
+                                                <h4 className="font-bold text-white">{sim.title}</h4>
+                                                {attempt && <span className={`text-[10px] font-bold ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'} ({attempt.score} pts)</span>}
+                                            </div>
+                                            <button onClick={() => setActiveSimulado(sim)} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">
+                                                {attempt ? 'VER RESULTADO' : 'ACESSAR'}
+                                            </button>
+                                        </div>
+                                    )})}</div>
                                 </div>
-                            )})}</div>
+                            ))}
                         </div>
-                    ))}
-                </div>
+                    )}
+                </>
             )}
         </div>
     </div>
