@@ -44,14 +44,18 @@ function App() {
   };
 
   return (
-    <div className="h-full w-full bg-insanus-black text-gray-100 font-sans flex flex-col overflow-hidden relative selection:bg-insanus-red selection:text-white">
-      {/* Background Ambience */}
-      <div className="absolute inset-0 bg-tech-grid pointer-events-none z-0" />
-      <div className="absolute top-0 left-1/4 w-1/2 h-1/2 bg-insanus-red/5 rounded-full blur-[120px] pointer-events-none z-0" />
+    <div className="h-full w-full bg-[#050505] text-gray-100 font-sans flex flex-col overflow-hidden relative selection:bg-insanus-red selection:text-white">
+      {/* Background Ambience - ONLY ON LOGIN SCREEN */}
+      {view === 'login' && (
+        <>
+          <div className="absolute inset-0 bg-tech-grid pointer-events-none z-0" />
+          <div className="absolute top-0 left-1/4 w-1/2 h-1/2 bg-insanus-red/5 rounded-full blur-[120px] pointer-events-none z-0" />
+        </>
+      )}
 
-      {/* Top Bar (Glass Effect) */}
+      {/* Top Bar (Solid for App, Hidden for Login) */}
       {view !== 'login' && (
-        <div className="glass z-20 border-b border-white/5 h-14 shrink-0 flex justify-between items-center px-6">
+        <div className="bg-[#0F0F0F] z-50 border-b border-[#333] h-14 shrink-0 flex justify-between items-center px-6 shadow-sm w-full">
           <div className="flex items-center gap-4">
              {/* Logo */}
              <div className="flex items-center gap-2">
@@ -66,7 +70,7 @@ function App() {
                 <Icon.Maximize className="w-4 h-4 group-hover:drop-shadow-[0_0_5px_rgba(255,31,31,0.8)]" /> 
                 <span className="hidden sm:inline">Tela Cheia</span>
              </button>
-             <div className="h-4 w-px bg-gray-700"></div>
+             <div className="h-4 w-px bg-[#333]"></div>
              <button onClick={handleLogout} className="text-xs font-mono uppercase tracking-widest flex items-center gap-2 text-gray-400 hover:text-white transition">
                 <Icon.LogOut className="w-4 h-4" /> Sair
              </button>
@@ -74,26 +78,30 @@ function App() {
         </div>
       )}
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden z-10 relative">
+      {/* Main Content Area - FORCED FULL WIDTH */}
+      <div className="flex-1 flex overflow-hidden z-10 relative bg-[#050505] w-full max-w-none">
         {view === 'login' && <LoginScreen onLogin={handleLogin} />}
         
         {view === 'admin' && user?.isAdmin && (
-            <AdminDashboard 
-                user={user} 
-                onSwitchToUser={() => setView('user')} 
-            />
+            <div className="w-full h-full flex">
+                <AdminDashboard 
+                    user={user} 
+                    onSwitchToUser={() => setView('user')} 
+                />
+            </div>
         )}
         
         {view === 'user' && user && (
-            <UserDashboard 
-                user={user} 
-                onUpdateUser={(u) => {
-                    setUser(u);
-                    localStorage.setItem('insanus_user', JSON.stringify(u));
-                }} 
-                onReturnToAdmin={user.isAdmin ? () => setView('admin') : undefined}
-            />
+            <div className="w-full h-full flex">
+                <UserDashboard 
+                    user={user} 
+                    onUpdateUser={(u) => {
+                        setUser(u);
+                        localStorage.setItem('insanus_user', JSON.stringify(u));
+                    }} 
+                    onReturnToAdmin={user.isAdmin ? () => setView('admin') : undefined}
+                />
+            </div>
         )}
       </div>
     </div>

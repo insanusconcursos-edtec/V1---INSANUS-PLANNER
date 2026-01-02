@@ -118,13 +118,13 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
     };
 
     return (
-        <div className="fixed inset-0 z-50 bg-black text-white flex flex-col animate-fade-in">
-             <div className="h-16 border-b border-white/10 bg-insanus-black flex items-center justify-between px-6 shrink-0">
+        <div className="fixed inset-0 z-50 bg-[#050505] text-white flex flex-col animate-fade-in">
+             <div className="h-16 border-b border-[#333] bg-[#0F0F0F] flex items-center justify-between px-6 shrink-0">
                 <div className="flex items-center gap-4">
                     <button onClick={onBack} className="text-gray-500 hover:text-white flex items-center gap-2">
                         <Icon.ArrowUp className="-rotate-90 w-5 h-5" /> <span className="text-xs font-bold uppercase">Sair</span>
                     </button>
-                    <div className="h-6 w-px bg-white/10"></div>
+                    <div className="h-6 w-px bg-[#333]"></div>
                     <h2 className="font-bold uppercase text-lg">{simulado.title}</h2>
                 </div>
                 {!showResult && (
@@ -138,8 +138,8 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
              </div>
 
              {confirmFinish && (
-                 <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur flex items-center justify-center p-4">
-                     <div className="bg-black border border-white/10 p-8 rounded-xl max-w-sm w-full text-center">
+                 <div className="absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+                     <div className="bg-[#121212] border border-[#333] p-8 rounded-xl max-w-sm w-full text-center">
                          <h3 className="text-xl font-bold text-white mb-2">Tem certeza?</h3>
                          <p className="text-gray-400 text-sm mb-6">Ao finalizar, você não poderá alterar suas respostas.</p>
                          <div className="flex gap-4">
@@ -152,15 +152,15 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
 
              <div className="flex-1 flex overflow-hidden">
                 {simulado.pdfUrl && (
-                    <div className="w-1/2 border-r border-white/10 bg-gray-900 flex flex-col">
+                    <div className="w-1/2 border-r border-[#333] bg-[#121212] flex flex-col">
                         <div className="flex-1 flex items-center justify-center text-gray-500">
                              <iframe src={simulado.pdfUrl} className="w-full h-full" title="PDF Viewer"></iframe>
                         </div>
                     </div>
                 )}
 
-                <div className={`${simulado.pdfUrl ? 'w-1/2' : 'w-full max-w-5xl mx-auto'} flex flex-col bg-black/50`}>
-                    <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                <div className={`${simulado.pdfUrl ? 'w-1/2' : 'w-full'} flex flex-col bg-[#050505]`}>
+                    <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
                          {attempt && (
                              <div className={`p-4 rounded-xl border mb-8 flex justify-between items-center ${attempt.isApproved ? 'bg-green-900/20 border-green-600' : 'bg-red-900/20 border-red-600'}`}>
                                  <div>
@@ -179,7 +179,7 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
                                 const isCorrect = showResult && userAns === correctAns;
                                 
                                 return (
-                                    <div key={qNum} className="glass p-4 rounded-xl border border-white/5">
+                                    <div key={qNum} className="bg-[#121212] p-4 rounded-xl border border-[#333]">
                                         <div className="flex justify-between mb-4">
                                             <span className="font-bold text-insanus-red">QUESTÃO {qNum}</span>
                                             {showResult && (
@@ -198,7 +198,7 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
                                                         className={`w-10 h-10 rounded font-bold transition-all ${
                                                             userAns === opt 
                                                                 ? 'bg-white text-black shadow-[0_0_10px_white]' 
-                                                                : 'bg-black border border-white/20 text-gray-400 hover:border-white'
+                                                                : 'bg-black border border-[#333] text-gray-400 hover:border-white'
                                                         } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
                                                     >
                                                         {opt}
@@ -213,7 +213,7 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
                                                         className={`flex-1 py-2 rounded font-bold transition-all ${
                                                             userAns === opt 
                                                                 ? 'bg-white text-black' 
-                                                                : 'bg-black border border-white/20 text-gray-400 hover:border-white'
+                                                                : 'bg-black border border-[#333] text-gray-400 hover:border-white'
                                                         } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
                                                     >
                                                         {opt === 'C' ? 'CERTO' : 'ERRADO'}
@@ -232,26 +232,51 @@ const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado
     );
 };
 
-// --- COMPONENT: SETUP & MANAGEMENT ---
-const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, currentPlan: StudyPlan | null, onSave: (r: Routine, l: UserLevel) => void, onPlanAction: (action: 'pause' | 'reschedule') => void }) => {
+// ... [SetupWizard and Schedule Engine] ...
+const SetupWizard = ({ user, currentPlan, onSave, onPlanAction, onUpdateUser }: { user: User, currentPlan: StudyPlan | null, onSave: (r: Routine, l: UserLevel) => void, onPlanAction: (action: 'pause' | 'reschedule') => void, onUpdateUser: (u: User) => void }) => {
     const [days, setDays] = useState(user.routine?.days || {});
     const [level, setLevel] = useState<UserLevel>(user.level || 'iniciante');
+    
+    // Password Change State
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [changingPass, setChangingPass] = useState(false);
 
     const handleDayChange = (key: string, val: string) => {
         setDays(prev => ({ ...prev, [key]: parseInt(val) || 0 }));
     };
 
+    const handleChangePassword = async () => {
+        if (!newPassword.trim() || !confirmPassword.trim()) return alert("Preencha os campos de senha.");
+        if (newPassword !== confirmPassword) return alert("As senhas não coincidem.");
+        if (newPassword.length < 4) return alert("A senha deve ter pelo menos 4 caracteres.");
+
+        setChangingPass(true);
+        try {
+            const updatedUser = { ...user, tempPassword: newPassword };
+            onUpdateUser(updatedUser);
+            await saveUserToDB(updatedUser);
+            alert("Senha alterada com sucesso!");
+            setNewPassword('');
+            setConfirmPassword('');
+        } catch (e) {
+            alert("Erro ao alterar senha.");
+        } finally {
+            setChangingPass(false);
+        }
+    };
+
     const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
 
     return (
-        <div className="max-w-7xl mx-auto space-y-8 animate-fade-in mt-4">
+        <div className="w-full space-y-8 animate-fade-in mt-4">
             {currentPlan && (
-                <div className="glass p-6 rounded-2xl border border-white/10 relative overflow-hidden">
+                <div className="bg-[#121212] p-6 rounded-2xl border border-[#333] relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-insanus-red"></div>
                     <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Icon.Edit className="w-5 h-5"/> GESTÃO DO PLANO ATUAL</h3>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                        <div className="bg-[#1E1E1E] p-4 rounded-xl border border-[#333]">
                             <h4 className="font-bold text-gray-300 text-sm mb-2">STATUS DO PLANO</h4>
                             <p className="text-xs text-gray-500 mb-4">Pausar o plano interrompe a geração de novas metas diárias até que você retorne.</p>
                             <button 
@@ -263,7 +288,7 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
                             </button>
                         </div>
 
-                        <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                        <div className="bg-[#1E1E1E] p-4 rounded-xl border border-[#333]">
                             <h4 className="font-bold text-gray-300 text-sm mb-2">ATRASOS E IMPREVISTOS</h4>
                             <p className="text-xs text-gray-500 mb-4">Replanejar define a data de início para HOJE, redistribuindo todas as metas pendentes.</p>
                             <button 
@@ -281,7 +306,7 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
                 </div>
             )}
 
-            <div className="glass p-8 rounded-2xl border border-white/10">
+            <div className="bg-[#121212] p-8 rounded-2xl border border-[#333]">
                 <div className="text-center mb-10">
                     <Icon.Clock className="w-16 h-16 text-insanus-red mx-auto mb-4" />
                     <h2 className="text-3xl font-black text-white uppercase tracking-tight">Configuração de Rotina</h2>
@@ -290,7 +315,7 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
                     <div>
-                        <h3 className="text-lg font-bold text-white mb-4 border-b border-white/10 pb-2 flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-white mb-4 border-b border-[#333] pb-2 flex items-center gap-2">
                             <Icon.User className="w-4 h-4 text-insanus-red"/> SEU NÍVEL
                         </h3>
                         <div className="space-y-3">
@@ -302,7 +327,7 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
                                 <div 
                                     key={opt.id}
                                     onClick={() => setLevel(opt.id as UserLevel)}
-                                    className={`p-3 rounded-xl border cursor-pointer transition-all ${level === opt.id ? 'bg-insanus-red/20 border-insanus-red shadow-neon' : 'bg-black/40 border-white/5 hover:border-white/20'}`}
+                                    className={`p-3 rounded-xl border cursor-pointer transition-all ${level === opt.id ? 'bg-insanus-red/20 border-insanus-red shadow-neon' : 'bg-[#1A1A1A] border-[#333] hover:border-[#555]'}`}
                                 >
                                     <div className="flex justify-between items-center mb-1">
                                         <span className={`font-bold uppercase text-sm ${level === opt.id ? 'text-white' : 'text-gray-400'}`}>{opt.label}</span>
@@ -315,12 +340,12 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
                     </div>
 
                     <div>
-                        <h3 className="text-lg font-bold text-white mb-4 border-b border-white/10 pb-2 flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-white mb-4 border-b border-[#333] pb-2 flex items-center gap-2">
                             <Icon.Calendar className="w-4 h-4 text-insanus-red"/> DISPONIBILIDADE (MIN)
                         </h3>
                         <div className="space-y-2">
                             {WEEKDAYS.map(d => (
-                                <div key={d.key} className="flex items-center justify-between bg-black/40 p-2 px-3 rounded border border-white/5 hover:border-white/20 transition">
+                                <div key={d.key} className="flex items-center justify-between bg-[#1A1A1A] p-2 px-3 rounded border border-[#333] hover:border-[#555] transition">
                                     <span className="text-xs font-bold text-gray-300 uppercase">{d.label}</span>
                                     <div className="flex items-center gap-2">
                                         <input 
@@ -328,7 +353,7 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
                                             value={days[d.key] || ''} 
                                             onChange={e => handleDayChange(d.key, e.target.value)}
                                             placeholder="0"
-                                            className="w-16 bg-white/5 border border-white/10 rounded p-1 text-right text-white font-mono text-sm focus:border-insanus-red outline-none focus:bg-black"
+                                            className="w-16 bg-[#050505] border border-[#333] rounded p-1 text-right text-white font-mono text-sm focus:border-insanus-red outline-none"
                                         />
                                         <span className="text-[10px] text-gray-600">min</span>
                                     </div>
@@ -339,26 +364,56 @@ const SetupWizard = ({ user, currentPlan, onSave, onPlanAction }: { user: User, 
                 </div>
 
                 <button onClick={() => onSave({ days }, level)} className="w-full mt-10 bg-insanus-red hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow-neon transition transform hover:scale-[1.01] flex items-center justify-center gap-2">
-                    <Icon.RefreshCw className="w-5 h-5"/> SALVAR ALTERAÇÕES
+                    <Icon.RefreshCw className="w-5 h-5"/> SALVAR ROTINA E NÍVEL
+                </button>
+            </div>
+
+            {/* PASSWORD CHANGE SECTION */}
+            <div className="bg-[#121212] p-8 rounded-2xl border border-[#333]">
+                <h3 className="text-lg font-bold text-white mb-6 border-b border-[#333] pb-2 flex items-center gap-2">
+                    <Icon.Eye className="w-4 h-4 text-insanus-red"/> SEGURANÇA E ACESSO
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Nova Senha</label>
+                        <input 
+                            type="password"
+                            value={newPassword} 
+                            onChange={e => setNewPassword(e.target.value)} 
+                            className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" 
+                            placeholder="Mínimo 4 caracteres"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Confirmar Nova Senha</label>
+                        <input 
+                            type="password"
+                            value={confirmPassword} 
+                            onChange={e => setConfirmPassword(e.target.value)} 
+                            className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" 
+                            placeholder="Repita a senha"
+                        />
+                    </div>
+                </div>
+                <button 
+                    onClick={handleChangePassword} 
+                    disabled={changingPass}
+                    className="w-full mt-6 bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 rounded-xl border border-gray-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                    {changingPass ? 'SALVANDO...' : 'ALTERAR SENHA'}
                 </button>
             </div>
         </div>
     );
 };
 
-// --- SCHEDULE ENGINE ---
-
-// Helper to expand folder items into discipline items at runtime
 const expandCycleItems = (cycle: Cycle, plan: StudyPlan): CycleItem[] => {
     const expandedItems: CycleItem[] = [];
     cycle.items.forEach(item => {
         if (item.folderId) {
-            // Find all disciplines in this folder, sort by order
             const folderDisciplines = plan.disciplines
                 .filter(d => d.folderId === item.folderId)
                 .sort((a, b) => a.order - b.order);
-            
-            // Convert each discipline to a CycleItem
             folderDisciplines.forEach(d => {
                 expandedItems.push({
                     disciplineId: d.id,
@@ -367,12 +422,18 @@ const expandCycleItems = (cycle: Cycle, plan: StudyPlan): CycleItem[] => {
             });
         } else if (item.disciplineId) {
             expandedItems.push(item);
+        } else if (item.simuladoId) {
+            expandedItems.push(item);
         }
     });
     return expandedItems;
 };
 
-const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: string, completedGoals: string[], userLevel: UserLevel, isPaused: boolean): Record<string, ScheduledItem[]> => {
+const isSimuladoCompleted = (simuladoId: string, attempts: SimuladoAttempt[]) => {
+    return attempts.some(a => a.simuladoId === simuladoId);
+};
+
+const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: string, completedGoals: string[], userLevel: UserLevel, isPaused: boolean, allSimulados: Simulado[], userAttempts: SimuladoAttempt[]): Record<string, ScheduledItem[]> => {
     const schedule: Record<string, ScheduledItem[]> = {};
     if (isPaused) return {}; 
     if (!plan || !plan.cycles || plan.cycles.length === 0) return {};
@@ -431,17 +492,51 @@ const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: strin
                 break;
             }
 
-            // CRITICAL: Expand folders into discipline list before processing
             const activeItems = expandCycleItems(cycle, plan);
-
             const cycleItem = activeItems[currentItemIndex];
             if (!cycleItem) {
                 currentCycleIndex++;
                 currentItemIndex = 0;
                 continue;
             }
-            
-            // cycleItem now guaranteed to have disciplineId because of expansion
+
+            if (cycleItem.simuladoId) {
+                const simulado = allSimulados.find(s => s.id === cycleItem.simuladoId);
+                const isCompleted = isSimuladoCompleted(cycleItem.simuladoId, userAttempts);
+                if (isCompleted) {
+                    currentItemIndex++;
+                    continue;
+                }
+                if (simulado) {
+                    const estDuration = simulado.totalQuestions * 3; 
+                    if (itemsProcessedToday === 0 || minutesAvailable > 60) {
+                        const uniqueId = `${dateStr}_SIM_${simulado.id}`;
+                        dayItems.push({
+                            uniqueId, 
+                            date: dateStr, 
+                            goalId: simulado.id, 
+                            goalType: 'SIMULADO',
+                            title: `SIMULADO: ${simulado.title}`,
+                            disciplineName: 'AVALIAÇÃO',
+                            subjectName: `${simulado.totalQuestions} Questões`,
+                            duration: estDuration,
+                            isRevision: false,
+                            completed: false,
+                            simuladoData: simulado
+                        });
+                        minutesAvailable = 0; 
+                        itemsProcessedToday++;
+                        currentItemIndex++;
+                    } else {
+                        minutesAvailable = 0;
+                        break;
+                    }
+                } else {
+                    currentItemIndex++;
+                }
+                continue;
+            }
+
             if (!cycleItem.disciplineId) {
                 currentItemIndex++;
                 continue;
@@ -495,6 +590,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const [currentPlan, setCurrentPlan] = useState<StudyPlan | null>(null);
   const [schedule, setSchedule] = useState<Record<string, ScheduledItem[]>>({});
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const [editalExpanded, setEditalExpanded] = useState<string[]>([]); // New State for Accordion
   
   // Timer State
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
@@ -526,19 +622,29 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   // Regenerate Schedule
   useEffect(() => {
       const hasRoutine = user.routine && user.routine.days && Object.values(user.routine.days).some((v: number) => v > 0);
-      if (currentPlan && hasRoutine) {
+      if (currentPlan && hasRoutine && simuladoClasses.length > 0) { 
           const config = user.planConfigs?.[currentPlan.id];
           const startDate = config?.startDate || getTodayStr();
           const isPaused = config?.isPaused || false;
+          const allSimulados = simuladoClasses.flatMap(sc => sc.simulados);
           const generated = generateSchedule(
               currentPlan, user.routine, startDate, user.progress.completedGoalIds, 
-              user.level || 'iniciante', isPaused
+              user.level || 'iniciante', isPaused, allSimulados, attempts
+          );
+          setSchedule(generated);
+      } else if (currentPlan && hasRoutine && simuladoClasses.length === 0) {
+           const config = user.planConfigs?.[currentPlan.id];
+           const startDate = config?.startDate || getTodayStr();
+           const isPaused = config?.isPaused || false;
+           const generated = generateSchedule(
+              currentPlan, user.routine, startDate, user.progress.completedGoalIds, 
+              user.level || 'iniciante', isPaused, [], attempts
           );
           setSchedule(generated);
       } else {
           setSchedule({});
       }
-  }, [currentPlan, user.routine, user.progress.completedGoalIds, user.level, user.planConfigs]);
+  }, [currentPlan, user.routine, user.progress.completedGoalIds, user.level, user.planConfigs, simuladoClasses, attempts]);
 
   const loadData = async () => {
       const allPlans = await fetchPlansFromDB();
@@ -560,10 +666,14 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       }
 
       const allClasses = await fetchSimuladoClassesFromDB();
-      const userClasses = user.isAdmin ? allClasses : allClasses.filter(c => user.allowedSimuladoClasses?.includes(c.id));
+      const userClasses = user.isAdmin ? allClasses : allClasses.filter(c => {
+          const isAllowedExplicitly = user.allowedSimuladoClasses?.includes(c.id);
+          const isLinkedToPlan = activePlan?.linkedSimuladoClasses?.includes(c.id);
+          return isAllowedExplicitly || isLinkedToPlan;
+      });
       setSimuladoClasses(userClasses);
       const allAttempts = await fetchSimuladoAttemptsFromDB();
-      setAttempts(allAttempts);
+      setAttempts(allAttempts.filter(a => a.userId === user.id));
       
       const hasRoutine = user.routine && user.routine.days && Object.values(user.routine.days).some((v: number) => v > 0);
       if (!hasRoutine) setView('setup'); 
@@ -578,6 +688,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
           const updatedUser = { ...user, currentPlanId: planId, planConfigs: newConfigs };
           onUpdateUser(updatedUser);
           saveUserToDB(updatedUser);
+          loadData(); 
       }
   };
 
@@ -648,23 +759,74 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       onUpdateUser(updatedUser);
       await saveUserToDB(updatedUser);
   };
+  
+  const handleSimuladoFinished = async (result: SimuladoAttempt) => {
+      await saveSimuladoAttemptToDB(result);
+      setAttempts(prev => [...prev, result]);
+      setActiveSimulado(null);
+  };
 
   const toggleAccordion = (uniqueId: string) => {
       setExpandedItems(prev => prev.includes(uniqueId) ? prev.filter(id => id !== uniqueId) : [...prev, uniqueId]);
   }
 
+  // --- VIEWS ---
   const renderDailyView = () => {
+      // ... Daily View Content (No Changes needed here) ...
       const daySchedule = schedule[selectedDate] || [];
       const isToday = selectedDate === getTodayStr();
       const dayName = getDayName(selectedDate);
       const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
 
+      let lateItems: ScheduledItem[] = [];
+      if (isToday) {
+          const today = getTodayStr();
+          Object.keys(schedule).forEach(date => {
+              if (date < today) {
+                  const uncompleted = schedule[date].filter(i => !i.completed && !isSimuladoCompleted(i.goalId, attempts));
+                  lateItems = [...lateItems, ...uncompleted];
+              }
+          });
+      }
+
       if (!currentPlan) return <div className="text-center p-10 text-gray-500">Selecione um plano no menu lateral para começar.</div>;
       if (isPlanPaused) return <div className="text-center p-20 text-yellow-500">PLANO PAUSADO</div>;
 
       return (
-          <div className="max-w-[1600px] w-full mx-auto animate-fade-in space-y-6">
-              <div className="flex justify-between items-end border-b border-white/10 pb-4">
+          <div className="w-full animate-fade-in space-y-6">
+              {isToday && lateItems.length > 0 && (
+                  <div className="bg-insanus-red/10 border border-insanus-red/50 rounded-xl p-4 animate-pulse-slow">
+                      <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-xl font-black text-insanus-red uppercase flex items-center gap-2">
+                              <Icon.Clock className="w-6 h-6"/> METAS EM ATRASO ({lateItems.length})
+                          </h3>
+                          <button 
+                              onClick={() => {
+                                  // eslint-disable-next-line no-restricted-globals
+                                  if(confirm("Isso irá mover todas as metas atrasadas e futuras para começar a partir de hoje. Continuar?")) {
+                                      handlePlanAction('reschedule');
+                                  }
+                              }} 
+                              className="bg-insanus-red hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold text-xs shadow-neon flex items-center gap-2"
+                          >
+                              <Icon.RefreshCw className="w-4 h-4"/> REPLANEJAR TUDO
+                          </button>
+                      </div>
+                      <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                          {lateItems.map((item, idx) => (
+                              <div key={`${item.uniqueId}_late_${idx}`} className="flex items-center justify-between bg-black/40 p-2 rounded border border-insanus-red/20">
+                                  <div className="flex flex-col">
+                                      <span className="text-white font-bold text-sm">{item.title}</span>
+                                      <span className="text-[10px] text-gray-400">{item.disciplineName} • {formatDate(item.date)}</span>
+                                  </div>
+                                  <span className="text-[10px] bg-insanus-red/20 text-insanus-red px-2 py-1 rounded font-bold">{item.goalType}</span>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+              )}
+
+              <div className="flex justify-between items-end border-b border-[#333] pb-4">
                   <div>
                       <h2 className="text-4xl font-black text-white uppercase tracking-tight">{isToday ? 'HOJE' : formatDate(selectedDate)}</h2>
                       <p className="text-insanus-red font-mono text-sm uppercase">{WEEKDAYS.find(w => w.key === dayName)?.label}</p>
@@ -678,15 +840,42 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
               {daySchedule.length === 0 ? (
                    <div className="text-center py-20 text-gray-600 italic">Nada agendado para hoje.</div>
               ) : (
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
                       {daySchedule.map((item) => {
-                          const goalColor = item.originalGoal?.color || '#FF1F1F';
+                          const goalColor = item.goalType === 'SIMULADO' ? '#3B82F6' : (item.originalGoal?.color || '#FF1F1F');
                           const isActive = activeGoalId === item.goalId;
                           const isExpanded = expandedItems.includes(item.uniqueId);
+                          
+                          if (item.goalType === 'SIMULADO') {
+                              return (
+                                <div key={item.uniqueId} className="bg-blue-900/10 border border-blue-500 rounded-xl p-6 relative overflow-hidden group hover:bg-blue-900/20 transition-all">
+                                    <div className="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <span className="bg-blue-500 text-white text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider">META DE SIMULADO</span>
+                                                <span className="text-blue-400 text-xs font-mono">{item.duration} min est.</span>
+                                            </div>
+                                            <h3 className="text-2xl font-black text-white mb-1">{item.title}</h3>
+                                            <p className="text-gray-400 text-sm">{item.subjectName}</p>
+                                        </div>
+                                        <Icon.List className="w-10 h-10 text-blue-500 opacity-20 group-hover:opacity-50 transition-opacity"/>
+                                    </div>
+                                    <div className="mt-6 flex gap-4">
+                                        <button 
+                                            onClick={() => setActiveSimulado(item.simuladoData || null)}
+                                            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg font-bold text-sm uppercase shadow-[0_0_15px_rgba(37,99,235,0.4)] transition-all transform hover:scale-105 flex items-center gap-2"
+                                        >
+                                            <Icon.Play className="w-4 h-4"/> REALIZAR SIMULADO AGORA
+                                        </button>
+                                    </div>
+                                </div>
+                              );
+                          }
 
                           return (
-                            <div key={item.uniqueId} className={`glass rounded-xl border-l-4 transition-all ${item.completed ? 'border-green-500 opacity-60' : isActive ? 'border-yellow-500 bg-yellow-500/5' : ''}`} style={{ borderLeftColor: item.completed ? undefined : isActive ? '#EAB308' : goalColor }}>
-                                <div className="p-4 flex items-start gap-4">
+                            <div key={item.uniqueId} className={`bg-[#121212] rounded-xl border-l-4 transition-all ${item.completed ? 'border-green-500 opacity-60' : isActive ? 'border-yellow-500 bg-yellow-900/10' : ''}`} style={{ borderLeftColor: item.completed ? undefined : isActive ? '#EAB308' : goalColor }}>
+                                <div className="p-4 flex items-start gap-4 border border-[#333] rounded-r-xl border-l-0 h-full">
                                     <div onClick={() => toggleGoalComplete(item.goalId)} className={`shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center cursor-pointer transition ${item.completed ? 'bg-green-500 border-green-500 text-black' : 'border-gray-500 hover:border-white'}`}>
                                         {item.completed && <Icon.Check className="w-4 h-4" />}
                                     </div>
@@ -722,9 +911,9 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                                                     {isExpanded ? 'OCULTAR AULAS' : `VER ${item.originalGoal?.subGoals?.length || 0} AULAS`}
                                                 </button>
                                                 {isExpanded && (
-                                                    <div className="mt-3 space-y-2 border-t border-white/10 pt-3 animate-fade-in">
+                                                    <div className="mt-3 space-y-2 border-t border-[#333] pt-3 animate-fade-in">
                                                         {item.originalGoal?.subGoals?.map((sub, sIdx) => (
-                                                            <div key={sIdx} className="flex justify-between items-center bg-black/30 p-2 rounded border border-white/5">
+                                                            <div key={sIdx} className="flex justify-between items-center bg-black/30 p-2 rounded border border-[#333]">
                                                                 <span className="text-sm text-gray-300 font-medium">{sIdx + 1}. {sub.title}</span>
                                                                 {sub.link && <a href={sub.link} target="_blank" rel="noreferrer" className="bg-insanus-red p-2 rounded-lg text-white"><Icon.Play className="w-3 h-3" /></a>}
                                                             </div>
@@ -745,7 +934,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   };
 
   const renderCalendarView = () => {
-    // ... existing implementation
+    // ... Calendar View Content (No Changes needed here) ...
     const weekDates = getWeekDays(selectedDate);
     const generateMonthGrid = () => {
         const date = new Date(selectedDate);
@@ -766,20 +955,21 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
 
     const monthDates = generateMonthGrid();
     const currentMonthName = new Date(selectedDate).toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+    const todayStr = getTodayStr();
 
     return (
-        <div className="max-w-[1600px] w-full mx-auto animate-fade-in h-[calc(100vh-100px)] flex flex-col">
-             <div className="flex justify-between items-center border-b border-white/10 pb-6 shrink-0">
+        <div className="w-full animate-fade-in h-[calc(100vh-100px)] flex flex-col">
+             <div className="flex justify-between items-center border-b border-[#333] pb-6 shrink-0">
                 <div>
                     <h2 className="text-3xl font-black text-white uppercase">CALENDÁRIO</h2>
                     <p className="text-xs text-insanus-red font-bold uppercase tracking-widest">{currentMonthName}</p>
                 </div>
                 <div className="flex items-center gap-4">
-                    <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
+                    <div className="flex bg-[#121212] rounded-lg p-1 border border-[#333]">
                         <button onClick={() => setCalendarMode('week')} className={`px-4 py-2 text-xs font-bold rounded transition-all ${calendarMode === 'week' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white'}`}>SEMANAL</button>
                         <button onClick={() => setCalendarMode('month')} className={`px-4 py-2 text-xs font-bold rounded transition-all ${calendarMode === 'month' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white'}`}>MENSAL</button>
                     </div>
-                    <div className="flex gap-1 bg-black/40 rounded-lg border border-white/10 p-1">
+                    <div className="flex gap-1 bg-[#121212] rounded-lg border border-[#333] p-1">
                         <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() - (calendarMode === 'week' ? 7 : 30)); setSelectedDate(d.toISOString().split('T')[0]); }} className="p-2 hover:bg-white/10 rounded text-white transition"><Icon.ArrowUp className="-rotate-90 w-4 h-4" /></button>
                         <button onClick={() => setSelectedDate(getTodayStr())} className="px-3 py-2 hover:bg-white/10 rounded text-[10px] font-bold text-white uppercase transition border-x border-white/5">Hoje</button>
                         <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() + (calendarMode === 'week' ? 7 : 30)); setSelectedDate(d.toISOString().split('T')[0]); }} className="p-2 hover:bg-white/10 rounded text-white transition"><Icon.ArrowDown className="-rotate-90 w-4 h-4" /></button>
@@ -798,16 +988,19 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                             const items = schedule[dateStr] || [];
                             const isSelected = selectedDate === dateStr;
                             const isToday = dateStr === getTodayStr();
+                            const hasLateGoals = dateStr < todayStr && items.some(i => !i.completed);
+
                             return (
-                                <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setView('daily'); }} className={`rounded-xl border flex flex-col transition-all cursor-pointer group h-full bg-black/20 ${isSelected ? 'bg-white/5 border-insanus-red shadow-[inset_0_0_20px_rgba(255,31,31,0.1)]' : 'border-white/5 hover:border-white/20 hover:bg-white/5'} ${isToday ? 'ring-1 ring-insanus-red ring-offset-2 ring-offset-black' : ''}`}>
-                                    <div className={`text-center p-3 border-b border-white/5 ${isToday ? 'bg-insanus-red text-white' : 'bg-white/5'}`}>
+                                <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setView('daily'); }} className={`rounded-xl border flex flex-col transition-all cursor-pointer group h-full bg-[#121212] ${isSelected ? 'bg-[#1E1E1E] border-insanus-red shadow-[inset_0_0_20px_rgba(255,31,31,0.1)]' : 'border-[#333] hover:border-[#555] hover:bg-[#1A1A1A]'} ${isToday ? 'ring-1 ring-insanus-red ring-offset-2 ring-offset-black' : ''} ${hasLateGoals ? 'border-red-500/50 bg-red-900/10' : ''}`}>
+                                    <div className={`text-center p-3 border-b border-[#333] ${isToday ? 'bg-insanus-red text-white' : 'bg-[#1A1A1A]'} relative`}>
                                         <div className="text-2xl font-black">{dateStr.split('-')[2]}</div>
+                                        {hasLateGoals && <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_red] animate-pulse"></div>}
                                     </div>
                                     <div className="flex-1 p-2 space-y-2 overflow-y-auto custom-scrollbar">
                                         {items.map((item, i) => {
-                                            const goalColor = item.originalGoal?.color || '#FF1F1F';
+                                            const goalColor = item.goalType === 'SIMULADO' ? '#3B82F6' : (item.originalGoal?.color || '#FF1F1F');
                                             return (
-                                                <div key={i} className={`p-3 rounded-lg border-l-4 bg-black shadow-lg hover:translate-y-[-2px] transition-all ${item.completed ? 'opacity-50 grayscale' : ''}`} style={{ borderLeftColor: goalColor, borderTop: '1px solid rgba(255,255,255,0.05)', borderRight: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                                <div key={i} className={`p-3 rounded-lg border-l-4 bg-black shadow-lg hover:translate-y-[-2px] transition-all ${item.completed ? 'opacity-50 grayscale' : ''}`} style={{ borderLeftColor: goalColor, borderTop: '1px solid #333', borderRight: '1px solid #333', borderBottom: '1px solid #333' }}>
                                                     <div className="flex justify-between items-start mb-1">
                                                         <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: goalColor }}>{item.disciplineName}</span>
                                                         {item.completed && <Icon.Check className="w-3 h-3 text-green-500" />}
@@ -832,16 +1025,21 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                             const isSelected = selectedDate === dateStr;
                             const isToday = dateStr === getTodayStr();
                             const isCurrentMonth = dateStr.slice(0, 7) === selectedDate.slice(0, 7);
+                            const hasLateGoals = dateStr < todayStr && items.some(i => !i.completed);
+
                             return (
-                                <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setView('daily'); }} className={`rounded-lg border p-2 flex flex-col transition-all cursor-pointer hover:bg-white/10 min-h-[80px] ${isSelected ? 'bg-white/5 border-insanus-red' : 'border-white/5 bg-black/40'} ${!isCurrentMonth ? 'opacity-30' : ''}`}>
+                                <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setView('daily'); }} className={`rounded-lg border p-2 flex flex-col transition-all cursor-pointer hover:bg-[#1A1A1A] min-h-[80px] ${isSelected ? 'bg-[#1E1E1E] border-insanus-red' : 'border-[#333] bg-[#121212]'} ${!isCurrentMonth ? 'opacity-30' : ''} ${hasLateGoals ? 'border-red-500/50' : ''}`}>
                                     <div className="flex justify-between items-center mb-1">
-                                        <span className={`text-xs font-bold ${isToday ? 'text-insanus-red bg-insanus-red/10 px-1.5 rounded' : 'text-gray-400'}`}>{dateStr.split('-')[2]}</span>
+                                        <div className="flex items-center gap-1">
+                                            <span className={`text-xs font-bold ${isToday ? 'text-insanus-red bg-insanus-red/10 px-1.5 rounded' : 'text-gray-400'}`}>{dateStr.split('-')[2]}</span>
+                                            {hasLateGoals && <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>}
+                                        </div>
                                         {items.length > 0 && <span className="text-[9px] text-gray-600 font-mono">{items.length}</span>}
                                     </div>
                                     <div className="flex-1 flex flex-col gap-1 overflow-hidden">
                                         {items.slice(0, 3).map((item, i) => (
                                             <div key={i} className="flex items-center gap-1">
-                                                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.completed ? 'bg-green-500' : ''}`} style={{ backgroundColor: item.completed ? undefined : item.originalGoal?.color || '#333' }}></div>
+                                                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.completed ? 'bg-green-500' : ''}`} style={{ backgroundColor: item.completed ? undefined : item.goalType === 'SIMULADO' ? '#3B82F6' : (item.originalGoal?.color || '#333') }}></div>
                                                 <div className="text-[9px] text-gray-500 truncate leading-none">{item.disciplineName}</div>
                                             </div>
                                         ))}
@@ -889,9 +1087,13 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       currentPlan.editalVerticalizado.forEach(d => d.topics.forEach(t => { totalTopics++; if (isTopicDone(t)) completedTopics++; }));
       const percentage = totalTopics === 0 ? 0 : Math.round((completedTopics / totalTopics) * 100);
 
+      const toggleEditalExpand = (id: string) => {
+          setEditalExpanded(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+      };
+
       return (
-          <div className="max-w-[1600px] w-full mx-auto animate-fade-in space-y-8">
-              <div className="flex items-center justify-between border-b border-white/10 pb-6">
+          <div className="w-full animate-fade-in space-y-8">
+              <div className="flex items-center justify-between border-b border-[#333] pb-6">
                   <h2 className="text-3xl font-black text-white">EDITAL <span className="text-insanus-red">VERTICALIZADO</span></h2>
                   <div className="text-right"><div className="text-4xl font-black text-white">{percentage}%</div><div className="text-xs text-gray-500 uppercase font-bold">Concluído</div></div>
               </div>
@@ -900,61 +1102,84 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                       const discTotal = disc.topics.length;
                       const discDone = disc.topics.filter(t => isTopicDone(t)).length;
                       const discPerc = discTotal === 0 ? 0 : (discDone / discTotal) * 100;
-                      return (
-                          <div key={disc.id} className="glass rounded-xl border border-white/5 overflow-hidden">
-                              <div className="bg-white/5 p-4 flex justify-between items-center cursor-pointer hover:bg-white/10">
-                                  <h3 className="font-bold text-white uppercase">{disc.name}</h3>
-                                  <div className="text-xs font-mono text-gray-400">{discDone}/{discTotal}</div>
-                              </div>
-                              <div className="h-1 w-full bg-black"><div className="h-full bg-insanus-red transition-all duration-1000" style={{ width: `${discPerc}%` }}></div></div>
-                              <div className="p-4 space-y-2">
-                                  {disc.topics.map(topic => {
-                                      const done = isTopicDone(topic);
-                                      return (
-                                          <div key={topic.id} className="flex flex-col gap-2 py-1 border-b border-white/5 last:border-0">
-                                              <div className="flex items-center gap-3 text-sm group">
-                                                  <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${done ? 'bg-green-600 border-green-600' : 'border-gray-600'}`}>{done && <Icon.Check className="w-3 h-3 text-white" />}</div>
-                                                  <span className={done ? 'text-gray-500 line-through' : 'text-gray-300 group-hover:text-white transition'}>{topic.name}</span>
-                                              </div>
-                                              <div className="flex flex-wrap gap-2 ml-7">
-                                                  {ORDERED_LINKS.map(type => {
-                                                      const goalId = topic.links[type as keyof typeof topic.links];
-                                                      if(!goalId) return null;
-                                                      const goal = findGoal(goalId as string);
-                                                      if(!goal) return null;
-                                                      
-                                                      const isGoalDone = user.progress.completedGoalIds.includes(goal.id);
+                      const isExpanded = editalExpanded.includes(disc.id);
 
-                                                      let IconComp = Icon.FileText;
-                                                      if(type === 'aula') IconComp = Icon.Play;
-                                                      if(type === 'questoes') IconComp = Icon.Code;
-                                                      if(type === 'leiSeca') IconComp = Icon.Book;
-                                                      if(type === 'resumo') IconComp = Icon.Edit;
-                                                      if(type === 'revisao') IconComp = Icon.RefreshCw;
-                                                      
-                                                      return (
-                                                          <a key={type} 
-                                                             href={goal.link || goal.pdfUrl} 
-                                                             target="_blank" 
-                                                             rel="noreferrer" 
-                                                             className={`flex items-center gap-2 px-2 py-1 rounded border text-[10px] font-bold uppercase transition hover:brightness-125 ${isGoalDone ? '!border-green-500 !bg-green-500/10 !text-green-500' : ''}`}
-                                                             style={{ 
-                                                                 borderColor: isGoalDone ? undefined : goal.color || '#333', 
-                                                                 color: isGoalDone ? undefined : goal.color || '#999', 
-                                                                 backgroundColor: isGoalDone ? undefined : (goal.color || '#000') + '15' 
-                                                             }}
-                                                          >
-                                                              <IconComp className="w-3 h-3"/>
-                                                              {goal.title}
-                                                              {isGoalDone && <Icon.Check className="w-3 h-3 ml-1" />}
-                                                          </a>
-                                                      );
-                                                  })}
-                                              </div>
-                                          </div>
-                                      )
-                                  })}
+                      return (
+                          <div key={disc.id} className="bg-[#121212] rounded-xl border border-[#333] overflow-hidden">
+                              <div 
+                                onClick={() => toggleEditalExpand(disc.id)}
+                                className="bg-[#1E1E1E] p-4 cursor-pointer hover:bg-white/5 transition-colors"
+                              >
+                                  <div className="flex justify-between items-center mb-3">
+                                      <div className="flex items-center gap-3">
+                                          <Icon.ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                          <h3 className="font-bold text-white uppercase text-sm">{disc.name}</h3>
+                                      </div>
+                                      <div className="flex flex-col items-end">
+                                          <span className={`text-sm font-black ${discPerc === 100 ? 'text-green-500' : 'text-insanus-red'}`}>{Math.round(discPerc)}%</span>
+                                          <span className="text-[10px] font-mono text-gray-500">{discDone}/{discTotal}</span>
+                                      </div>
+                                  </div>
+                                  
+                                  {/* The Progress Bar */}
+                                  <div className="w-full bg-black rounded-full h-2 overflow-hidden border border-white/5">
+                                      <div 
+                                          className={`h-full transition-all duration-1000 ${discPerc === 100 ? 'bg-green-600 shadow-[0_0_10px_rgba(22,163,74,0.5)]' : 'bg-insanus-red shadow-neon'}`} 
+                                          style={{ width: `${discPerc}%` }}
+                                      ></div>
+                                  </div>
                               </div>
+                              
+                              {isExpanded && (
+                                <div className="p-4 space-y-2 animate-fade-in">
+                                    {disc.topics.map(topic => {
+                                        const done = isTopicDone(topic);
+                                        return (
+                                            <div key={topic.id} className="flex flex-col gap-2 py-1 border-b border-[#333] last:border-0">
+                                                <div className="flex items-center gap-3 text-sm group">
+                                                    <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${done ? 'bg-green-600 border-green-600' : 'border-gray-600'}`}>{done && <Icon.Check className="w-3 h-3 text-white" />}</div>
+                                                    <span className={done ? 'text-gray-500 line-through' : 'text-gray-300 group-hover:text-white transition'}>{topic.name}</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2 ml-7">
+                                                    {ORDERED_LINKS.map(type => {
+                                                        const goalId = topic.links[type as keyof typeof topic.links];
+                                                        if(!goalId) return null;
+                                                        const goal = findGoal(goalId as string);
+                                                        if(!goal) return null;
+                                                        
+                                                        const isGoalDone = user.progress.completedGoalIds.includes(goal.id);
+
+                                                        let IconComp = Icon.FileText;
+                                                        if(type === 'aula') IconComp = Icon.Play;
+                                                        if(type === 'questoes') IconComp = Icon.Code;
+                                                        if(type === 'leiSeca') IconComp = Icon.Book;
+                                                        if(type === 'resumo') IconComp = Icon.Edit;
+                                                        if(type === 'revisao') IconComp = Icon.RefreshCw;
+                                                        
+                                                        return (
+                                                            <a key={type} 
+                                                                href={goal.link || goal.pdfUrl} 
+                                                                target="_blank" 
+                                                                rel="noreferrer" 
+                                                                className={`flex items-center gap-2 px-2 py-1 rounded border text-[10px] font-bold uppercase transition hover:brightness-125 ${isGoalDone ? '!border-green-500 !bg-green-500/10 !text-green-500' : ''}`}
+                                                                style={{ 
+                                                                    borderColor: isGoalDone ? undefined : goal.color || '#333', 
+                                                                    color: isGoalDone ? undefined : goal.color || '#999', 
+                                                                    backgroundColor: isGoalDone ? undefined : (goal.color || '#000') + '15' 
+                                                                }}
+                                                            >
+                                                                <IconComp className="w-3 h-3"/>
+                                                                {goal.title}
+                                                                {isGoalDone && <Icon.Check className="w-3 h-3 ml-1" />}
+                                                            </a>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                              )}
                           </div>
                       )
                   })}
@@ -963,49 +1188,84 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       )
   };
 
-  // ... Rest of UserDashboard (Edital, Simulados) ...
   return (
-    <div className="flex h-full w-full bg-insanus-black text-gray-200">
-        <div className="w-20 lg:w-64 bg-black/50 border-r border-white/10 flex flex-col shrink-0 z-30 backdrop-blur-md">
-             <div className="p-6 border-b border-white/5"><h1 className="font-black text-white text-lg">INSANUS</h1></div>
-             <nav className="p-4 space-y-2 flex-1">
-                 {plans.length > 1 && (
-                     <div className="mb-6 px-2">
-                         <label className="text-[10px] uppercase font-bold text-gray-500 mb-2 block">Plano Ativo</label>
-                         <select value={currentPlan?.id || ''} onChange={(e) => handleSelectPlan(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded p-2 text-xs text-white outline-none">
-                             {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                         </select>
-                     </div>
-                 )}
-                 <button onClick={() => setView('daily')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'daily' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.Check className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Metas de Hoje</span></button>
-                 <button onClick={() => setView('calendar')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'calendar' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.Calendar className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Calendário</span></button>
-                 <button onClick={() => setView('edital')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'edital' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.List className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Edital Verticalizado</span></button>
-                 <button onClick={() => setView('simulados')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'simulados' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.FileText className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Simulados</span></button>
-                 <button onClick={() => setView('setup')} className={`w-full text-left p-4 rounded-xl flex items-center gap-4 transition-all ${view === 'setup' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}><Icon.Clock className="w-5 h-5" /><span className="hidden lg:block font-bold text-sm">Configuração</span></button>
-             </nav>
-             <div className="p-4 border-t border-white/5 bg-black/20">
-                 <div className="text-[10px] text-gray-500 font-bold uppercase mb-1">Tempo Total Estudado</div>
-                 <div className="text-xl font-black text-white">{formatSecondsToTime(user.progress.totalStudySeconds)}</div>
-                 {currentPlan && user.progress.planStudySeconds?.[currentPlan.id] && <div className="text-[9px] text-insanus-red mt-1 font-mono">Neste Plano: {formatSecondsToTime(user.progress.planStudySeconds[currentPlan.id])}</div>}
+    <div className="flex flex-col h-full w-full bg-[#050505] text-gray-200">
+        {/* ... Rest of UserDashboard JSX ... */}
+        {activeSimulado && (
+            <div className="absolute inset-0 z-[60]">
+                <SimuladoRunner 
+                    user={user} 
+                    classId={activeSimulado ? simuladoClasses.find(c => c.simulados.some(s => s.id === activeSimulado.id))?.id || '' : ''}
+                    simulado={activeSimulado} 
+                    attempt={attempts.find(a => a.simuladoId === activeSimulado.id)}
+                    onFinish={handleSimuladoFinished}
+                    onBack={() => setActiveSimulado(null)}
+                />
+            </div>
+        )}
+
+        <div className="h-14 border-b border-[#333] bg-[#0F0F0F] flex items-center px-8 gap-8 shrink-0 overflow-x-auto custom-scrollbar z-20 shadow-sm">
+             <div className="flex gap-6 flex-1">
+                 <button onClick={() => setView('daily')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'daily' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
+                     <Icon.Check className="w-4 h-4"/> Metas de Hoje
+                 </button>
+                 <button onClick={() => setView('calendar')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'calendar' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
+                     <Icon.Calendar className="w-4 h-4"/> Calendário
+                 </button>
+                 <button onClick={() => setView('edital')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'edital' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
+                     <Icon.List className="w-4 h-4"/> Edital
+                 </button>
+                 <button onClick={() => setView('simulados')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'simulados' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
+                     <Icon.FileText className="w-4 h-4"/> Simulados
+                 </button>
+                 <button onClick={() => setView('setup')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'setup' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
+                     <Icon.Clock className="w-4 h-4"/> Configuração
+                 </button>
              </div>
-             {(onReturnToAdmin || user.isAdmin) && (
-                 <div className="p-4 border-t border-white/5"><button onClick={onReturnToAdmin} className="w-full bg-gray-800 hover:bg-gray-700 text-white p-3 rounded-xl flex items-center justify-center lg:justify-start gap-3 transition-all border border-transparent hover:border-gray-600 shadow-lg group"><Icon.LogOut className="w-5 h-5 text-insanus-red group-hover:scale-110 transition-transform" /><span className="hidden lg:block font-bold text-sm uppercase">Voltar p/ Admin</span></button></div>
-             )}
+             
+             <div className="flex items-center gap-4">
+                 {plans.length > 1 && (
+                     <select value={currentPlan?.id || ''} onChange={(e) => handleSelectPlan(e.target.value)} className="bg-black/50 border border-[#333] rounded p-1 text-[10px] text-white outline-none w-32 truncate">
+                         {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                     </select>
+                 )}
+                 <div className="text-right hidden md:block">
+                     <div className="text-[9px] text-gray-500 font-bold uppercase">Tempo Total</div>
+                     <div className="text-xs font-black text-insanus-red font-mono">{formatSecondsToTime(user.progress.totalStudySeconds)}</div>
+                 </div>
+                 {(onReturnToAdmin || user.isAdmin) && (
+                     <button onClick={onReturnToAdmin} className="text-gray-500 hover:text-white p-2 rounded-full hover:bg-white/5 transition" title="Voltar para Admin">
+                         <Icon.LogOut className="w-4 h-4"/>
+                     </button>
+                 )}
+             </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar relative">
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar relative bg-[#050505]">
             {user.isAdmin && <div className="absolute top-4 right-4 bg-insanus-red/20 border border-insanus-red text-insanus-red px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest pointer-events-none z-10">Modo Admin</div>}
-            {view === 'setup' && <SetupWizard user={user} currentPlan={currentPlan} onSave={handleSetupSave} onPlanAction={handlePlanAction} />}
+            {view === 'setup' && <SetupWizard user={user} currentPlan={currentPlan} onSave={handleSetupSave} onPlanAction={handlePlanAction} onUpdateUser={onUpdateUser} />}
             {view === 'daily' && renderDailyView()}
             {view === 'calendar' && renderCalendarView()}
             {view === 'edital' && renderEditalView()}
             {view === 'simulados' && (
-                <div className="max-w-[1600px] mx-auto space-y-10 animate-fade-in">
-                    <h2 className="text-3xl font-black text-white mb-8 border-b border-white/10 pb-4">SIMULADOS</h2>
+                <div className="w-full animate-fade-in space-y-10">
+                    <h2 className="text-3xl font-black text-white mb-8 border-b border-[#333] pb-4">SIMULADOS</h2>
                     {simuladoClasses.map(sc => (
-                        <div key={sc.id} className="glass rounded-xl p-6 border border-white/5">
+                        <div key={sc.id} className="bg-[#121212] rounded-xl p-6 border border-[#333]">
                             <h3 className="text-xl font-black text-white mb-4">{sc.name}</h3>
-                            <div className="grid gap-4">{sc.simulados.map(sim => (<div key={sim.id} className="bg-black/40 p-4 rounded-lg flex justify-between items-center border border-white/5"><h4 className="font-bold text-white">{sim.title}</h4><button onClick={() => setActiveSimulado(sim)} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">ACESSAR</button></div>))}</div>
+                            <div className="grid gap-4">{sc.simulados.map(sim => {
+                                const attempt = attempts.find(a => a.simuladoId === sim.id);
+                                return (
+                                <div key={sim.id} className="bg-black/40 p-4 rounded-lg flex justify-between items-center border border-[#333]">
+                                    <div>
+                                        <h4 className="font-bold text-white">{sim.title}</h4>
+                                        {attempt && <span className={`text-[10px] font-bold ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'} ({attempt.score} pts)</span>}
+                                    </div>
+                                    <button onClick={() => setActiveSimulado(sim)} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">
+                                        {attempt ? 'VER RESULTADO' : 'ACESSAR'}
+                                    </button>
+                                </div>
+                            )})}</div>
                         </div>
                     ))}
                 </div>

@@ -44,7 +44,7 @@ export interface Routine {
   };
 }
 
-export type GoalType = 'AULA' | 'MATERIAL' | 'QUESTOES' | 'LEI_SECA' | 'RESUMO' | 'REVISAO';
+export type GoalType = 'AULA' | 'MATERIAL' | 'QUESTOES' | 'LEI_SECA' | 'RESUMO' | 'REVISAO' | 'SIMULADO';
 
 export interface SubGoal {
   id: string;
@@ -110,7 +110,8 @@ export interface Folder {
 export interface CycleItem {
   disciplineId?: string; // Optional if folderId is present
   folderId?: string; // New: Supports adding a whole folder
-  subjectsCount: number; // How many subjects to advance per discipline in this slot
+  simuladoId?: string; // New: Supports adding a Simulado Exam directly
+  subjectsCount: number; // How many subjects to advance per discipline in this slot (ignored for Simulado)
 }
 
 export interface Cycle {
@@ -162,12 +163,15 @@ export interface StudyPlan {
   // New Feature
   editalVerticalizado?: EditalDiscipline[];
   linkedContests?: string[]; // Master list of contests for this plan (e.g. ['PF', 'PRF', 'PC-DF'])
+  
+  // New Feature: Linked Simulado Classes
+  linkedSimuladoClasses?: string[]; // IDs of SimuladoClasses linked to this plan
 }
 
 export interface ScheduledItem {
   uniqueId: string; // Generated for the schedule
   date: string; // YYYY-MM-DD
-  goalId: string;
+  goalId: string; // Can be SimuladoID
   subGoalId?: string; // If it's a specific class/subgoal
   goalType: GoalType;
   title: string;
@@ -177,8 +181,11 @@ export interface ScheduledItem {
   isRevision: boolean;
   revisionIndex?: number;
   completed: boolean;
-  originalGoal?: Goal; // helper
+  originalGoal?: Goal; // helper (Undefined if it is a Simulado)
   
+  // Simulado Specific
+  simuladoData?: Simulado;
+
   // Splitting Logic
   isSplit?: boolean;
   partIndex?: number; // 1, 2...
