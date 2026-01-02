@@ -54,6 +54,12 @@ export interface SubGoal {
   duration: number; // minutes
 }
 
+export interface Flashcard {
+  id: string;
+  question: string;
+  answer: string;
+}
+
 export interface Goal {
   id: string;
   title: string;
@@ -83,6 +89,9 @@ export interface Goal {
   revisionIntervals?: string; // "1,7,15,30"
   repeatLastInterval?: boolean;
   
+  // Type: REVISAO (Notebook LM Style)
+  flashcards?: Flashcard[];
+
   // Sorting
   order: number;
 }

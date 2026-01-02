@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { User, StudyPlan, Routine, Goal, SubGoal, UserProgress, GoalType, PlanConfig, Discipline, Subject, UserLevel, SimuladoClass, Simulado, SimuladoAttempt, ScheduledItem, EditalTopic, Cycle, CycleItem } from '../types';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { User, StudyPlan, Routine, Goal, SubGoal, UserProgress, GoalType, PlanConfig, Discipline, Subject, UserLevel, SimuladoClass, Simulado, SimuladoAttempt, ScheduledItem, EditalTopic, Cycle, CycleItem, Flashcard } from '../types';
 import { Icon } from '../components/Icons';
 import { WEEKDAYS, calculateGoalDuration, uuid } from '../constants';
 import { fetchPlansFromDB, saveUserToDB, fetchSimuladoClassesFromDB, fetchSimuladoAttemptsFromDB, saveSimuladoAttemptToDB, fetchUsersFromDB } from '../services/db';
@@ -10,9 +10,22 @@ interface Props {
   onReturnToAdmin?: () => void;
 }
 
+// --- INTERFACES ---
+interface SimuladoRunnerProps {
+    user: User;
+    classId: string;
+    simulado: Simulado;
+    attempt?: SimuladoAttempt;
+    allAttempts: SimuladoAttempt[];
+    allUsersMap: Record<string, User>;
+    onFinish: (attempt: SimuladoAttempt) => void;
+    onBack: () => void;
+}
+
 // --- HELPER: DATE & TIME UTILS ---
 const getTodayStr = () => {
     const d = new Date();
+    // Adjust for timezone to ensure we get "local today" string YYYY-MM-DD
     const offset = d.getTimezoneOffset() * 60000;
     return new Date(d.getTime() - offset).toISOString().split('T')[0];
 };
@@ -44,812 +57,365 @@ const getDayName = (dateStr: string) => {
     return dayMap[d.getDay()];
 };
 
-const getWeekDays = (baseDateStr: string) => {
-    const date = new Date(baseDateStr + 'T12:00:00');
-    const day = date.getDay(); 
-    const diff = date.getDate() - day; 
-    const sunday = new Date(date.setDate(diff));
-    
-    const week = [];
-    for(let i=0; i<7; i++) {
-        const next = new Date(sunday);
-        next.setDate(sunday.getDate() + i);
-        week.push(next.toISOString().split('T')[0]);
-    }
-    return week;
-};
-
-// --- SIMULADO RUNNER COMPONENT ---
-interface SimuladoRunnerProps {
-    user: User;
-    classId: string;
-    simulado: Simulado;
-    attempt?: SimuladoAttempt;
-    allAttempts: SimuladoAttempt[];
-    allUsersMap: Record<string, User>;
-    onFinish: (result: SimuladoAttempt) => void;
-    onBack: () => void;
+// --- FLASHCARD PLAYER COMPONENT ---
+interface FlashcardPlayerProps {
+    cards: Flashcard[];
+    onClose: () => void;
 }
 
+const FlashcardPlayer: React.FC<FlashcardPlayerProps> = ({ cards, onClose }) => {
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [isFlipped, setIsFlipped] = useState(false);
+
+    const handleNext = () => {
+        setIsFlipped(false);
+        setTimeout(() => {
+            setCurrentIndex(prev => (prev + 1) % cards.length);
+        }, 150);
+    };
+
+    const handlePrev = () => {
+        setIsFlipped(false);
+        setTimeout(() => {
+            setCurrentIndex(prev => (prev - 1 + cards.length) % cards.length);
+        }, 150);
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4 backdrop-blur-md animate-fade-in">
+            <div className="w-full max-w-3xl flex flex-col h-[85vh]">
+                <div className="flex justify-between items-center mb-8 px-2">
+                    <h3 className="text-2xl font-black text-white uppercase flex items-center gap-3 tracking-tight"><Icon.RefreshCw className="w-6 h-6 text-blue-500"/> Modo Revisão</h3>
+                    <button onClick={onClose} className="bg-white/5 hover:bg-white/10 border border-white/10 p-2 rounded-full text-white transition hover:scale-110"><Icon.LogOut className="w-5 h-5"/></button>
+                </div>
+
+                <div className="flex-1 relative" style={{ perspective: '2000px' }}>
+                    <div 
+                        className="w-full h-full relative transition-all duration-500 cursor-pointer"
+                        style={{ 
+                            transformStyle: 'preserve-3d',
+                            transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)'
+                        }}
+                        onClick={() => setIsFlipped(!isFlipped)}
+                    >
+                        {/* Front Face (Question) */}
+                        <div 
+                            className="absolute inset-0 bg-[#151515] border border-blue-500/20 rounded-3xl p-8 md:p-12 flex flex-col items-center justify-center text-center shadow-[0_0_50px_rgba(0,0,0,0.5)]"
+                            style={{ backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}
+                        >
+                            <div className="bg-blue-500/10 text-blue-400 px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest mb-8 border border-blue-500/20">
+                                FLASHCARD {currentIndex + 1} / {cards.length}
+                            </div>
+                            
+                            <div className="flex-1 flex items-center justify-center w-full overflow-y-auto custom-scrollbar">
+                                <p className="text-2xl md:text-3xl lg:text-4xl font-bold text-gray-100 leading-snug">
+                                    {cards[currentIndex].question}
+                                </p>
+                            </div>
+
+                            <div className="mt-8 flex flex-col items-center gap-2 animate-pulse">
+                                <Icon.ArrowUp className="w-6 h-6 text-gray-600"/>
+                                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Toque para ver a resposta</span>
+                            </div>
+                        </div>
+
+                        {/* Back Face (Answer) */}
+                        <div 
+                            className="absolute inset-0 bg-[#0A0A0A] border-2 border-blue-600 rounded-3xl p-8 md:p-12 flex flex-col items-center justify-center text-center shadow-[0_0_50px_rgba(37,99,235,0.15)]"
+                            style={{ 
+                                backfaceVisibility: 'hidden', 
+                                WebkitBackfaceVisibility: 'hidden', 
+                                transform: 'rotateY(180deg)' 
+                            }}
+                        >
+                            <span className="text-xs font-black text-blue-500 uppercase tracking-widest mb-6">RESPOSTA CORRETA</span>
+                            
+                            <div className="flex-1 flex items-center justify-center w-full overflow-y-auto custom-scrollbar">
+                                <p className="text-xl md:text-2xl font-medium text-gray-200 leading-relaxed">
+                                    {cards[currentIndex].answer}
+                                </p>
+                            </div>
+
+                            <button 
+                                className="mt-8 bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold text-sm uppercase shadow-lg transition-transform hover:scale-105"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleNext();
+                                }}
+                            >
+                                Próximo Card
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex justify-between items-center mt-8 gap-4 px-2">
+                    <button onClick={handlePrev} className="bg-[#151515] border border-white/10 hover:bg-white/5 text-gray-400 hover:text-white px-6 py-4 rounded-xl font-bold transition flex items-center gap-3 w-1/3 justify-center">
+                        <Icon.ArrowUp className="-rotate-90 w-4 h-4"/> <span className="hidden md:inline">ANTERIOR</span>
+                    </button>
+                    
+                    <div className="flex gap-1.5 flex-1 justify-center">
+                        {cards.map((_, idx) => (
+                            <div 
+                                key={idx} 
+                                className={`h-1.5 rounded-full transition-all duration-300 ${idx === currentIndex ? 'bg-blue-500 w-8' : 'bg-gray-800 w-1.5'}`}
+                            />
+                        ))}
+                    </div>
+
+                    <button onClick={handleNext} className="bg-[#151515] border border-white/10 hover:bg-white/5 text-gray-400 hover:text-white px-6 py-4 rounded-xl font-bold transition flex items-center gap-3 w-1/3 justify-center">
+                        <span className="hidden md:inline">PRÓXIMO</span> <Icon.ArrowDown className="-rotate-90 w-4 h-4"/>
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- SIMULADO RUNNER ---
 const SimuladoRunner: React.FC<SimuladoRunnerProps> = ({ user, classId, simulado, attempt, allAttempts, allUsersMap, onFinish, onBack }) => {
     const [answers, setAnswers] = useState<Record<number, string | null>>(attempt?.answers || {});
     const [showResult, setShowResult] = useState(!!attempt);
     const [confirmFinish, setConfirmFinish] = useState(false);
 
-    const handleAnswer = (q: number, val: string) => {
-        if (showResult) return;
-        setAnswers(prev => ({ ...prev, [q]: val }));
-    };
+    const handleAnswer = (q: number, val: string) => { if (showResult) return; setAnswers(prev => ({ ...prev, [q]: val })); };
 
     const finishSimulado = () => {
         let score = 0;
-        let correctCount = 0;
-        
         // Calculate Score
         for (let i = 1; i <= simulado.totalQuestions; i++) {
             const userAns = answers[i];
             const correctAns = simulado.correctAnswers[i];
             const val = simulado.questionValues[i] || 1;
-            
-            if (userAns && userAns === correctAns) {
-                score += val;
-                correctCount++;
-            } else if (userAns && simulado.hasPenalty) {
-                score -= val;
-            }
+            if (userAns && userAns === correctAns) { score += val; } else if (userAns && simulado.hasPenalty) { score -= val; }
         }
         if (score < 0) score = 0;
-
         const totalPoints = Object.values(simulado.questionValues).reduce((a: number, b: number) => a + b, 0) || simulado.totalQuestions;
         const percent = totalPoints > 0 ? (score / totalPoints) * 100 : 0;
         const isApproved = simulado.minTotalPercent ? percent >= simulado.minTotalPercent : percent >= 50;
-
-        const result: SimuladoAttempt = {
-            id: attempt?.id || uuid(),
-            userId: user.id,
-            simuladoId: simulado.id,
-            classId: classId,
-            date: new Date().toISOString(),
-            answers,
-            diagnosisReasons: {}, 
-            score,
-            isApproved
-        };
-
-        onFinish(result);
-        setShowResult(true);
-        setConfirmFinish(false);
+        const result: SimuladoAttempt = { id: attempt?.id || uuid(), userId: user.id, simuladoId: simulado.id, classId: classId, date: new Date().toISOString(), answers, diagnosisReasons: {}, score, isApproved };
+        onFinish(result); setShowResult(true); setConfirmFinish(false);
     };
 
-    // Calculate Ranking
     const ranking = React.useMemo(() => {
         if (!showResult) return [];
-        
-        // Filter attempts for this simulado
         const relevantAttempts = allAttempts.filter(a => a.simuladoId === simulado.id);
-        
-        // If current attempt is not in allAttempts (freshly finished), add it for ranking
-        // Note: We check if it's already there to avoid duplicates
         let finalAttempts = [...relevantAttempts];
-        if (attempt && !finalAttempts.some(a => a.id === attempt.id)) {
-            finalAttempts.push(attempt);
-        }
-        
-        // Ensure unique per user (take best score)
+        if (attempt && !finalAttempts.some(a => a.id === attempt.id)) { finalAttempts.push(attempt); }
         const best: Record<string, SimuladoAttempt> = {};
-        finalAttempts.forEach(a => {
-            const existing = best[a.userId];
-            if (!existing || a.score > existing.score) {
-                best[a.userId] = a;
-            }
-        });
-
-        // Convert to array and sort
-        return Object.values(best)
-            .sort((a, b) => b.score - a.score)
-            .map((a, index) => {
+        finalAttempts.forEach(a => { const existing = best[a.userId]; if (!existing || a.score > existing.score) { best[a.userId] = a; } });
+        return Object.values(best).sort((a, b) => b.score - a.score).map((a, index) => {
                 const u = allUsersMap[a.userId];
-                // DISPLAY NAME LOGIC: Nickname > First Name + Initial > Unknown
                 let displayName = 'Usuário Desconhecido';
-                if (u) {
-                    if (u.nickname && u.nickname.trim() !== '') {
-                        displayName = u.nickname;
-                    } else {
-                        const parts = u.name.split(' ');
-                        displayName = parts[0] + (parts.length > 1 ? ' ' + parts[1].charAt(0) + '.' : '');
-                    }
-                }
-
-                return {
-                    rank: index + 1,
-                    userId: a.userId,
-                    name: displayName,
-                    score: a.score,
-                    isCurrentUser: a.userId === user.id
-                };
+                if (u) { if (u.nickname && u.nickname.trim() !== '') { displayName = u.nickname; } else { const parts = u.name.split(' '); displayName = parts[0] + (parts.length > 1 ? ' ' + parts[1].charAt(0) + '.' : ''); } }
+                return { rank: index + 1, userId: a.userId, name: displayName, score: a.score, isCurrentUser: a.userId === user.id };
             });
     }, [showResult, allAttempts, simulado.id, attempt, user.id, allUsersMap]);
 
     return (
         <div className="w-full flex flex-col animate-fade-in pb-10">
-             {/* Sub-header for Simulado context */}
              <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#333]">
-                <div className="flex items-center gap-4">
-                    <button onClick={onBack} className="text-gray-500 hover:text-white flex items-center gap-2 transition">
-                        <Icon.ArrowUp className="-rotate-90 w-5 h-5" /> <span className="text-xs font-bold uppercase">Sair do Simulado</span>
-                    </button>
-                    <div className="h-6 w-px bg-[#333]"></div>
-                    <h2 className="font-bold uppercase text-xl text-white">{simulado.title}</h2>
-                </div>
-                {!showResult && (
-                    <div className="flex gap-2">
-                        {/* Timer could go here */}
-                    </div>
-                )}
+                <div className="flex items-center gap-4"><button onClick={onBack} className="text-gray-500 hover:text-white flex items-center gap-2 transition"><Icon.ArrowUp className="-rotate-90 w-5 h-5" /> <span className="text-xs font-bold uppercase">Sair do Simulado</span></button><div className="h-6 w-px bg-[#333]"></div><h2 className="font-bold uppercase text-xl text-white">{simulado.title}</h2></div>
              </div>
-
-             {/* Resources Section - Replaces the iframe */}
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                {/* Caderno de Questões */}
                 <div className="bg-[#121212] p-6 rounded-xl border border-[#333] flex flex-col items-center justify-center text-center gap-4 hover:border-white/20 transition group">
-                    <div className="w-12 h-12 bg-insanus-red/10 rounded-full flex items-center justify-center group-hover:scale-110 transition">
-                        <Icon.Book className="w-6 h-6 text-insanus-red" />
-                    </div>
-                    <div>
-                        <h3 className="text-white font-bold uppercase text-sm">Material do Simulado</h3>
-                        <p className="text-gray-500 text-xs mt-1">Baixe o PDF para resolver as questões.</p>
-                    </div>
-                    {simulado.pdfUrl ? (
-                        <a 
-                            href={simulado.pdfUrl} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-6 py-2 rounded-lg text-xs font-bold uppercase transition flex items-center gap-2 shadow-lg"
-                        >
-                            <Icon.Maximize className="w-4 h-4"/> BAIXAR CADERNO DE QUESTÕES
-                        </a>
-                    ) : (
-                        <span className="text-red-500 text-xs font-bold bg-red-900/10 px-3 py-1 rounded">PDF Indisponível</span>
-                    )}
+                    <div className="w-12 h-12 bg-insanus-red/10 rounded-full flex items-center justify-center group-hover:scale-110 transition"><Icon.Book className="w-6 h-6 text-insanus-red" /></div>
+                    <div><h3 className="text-white font-bold uppercase text-sm">Material do Simulado</h3><p className="text-gray-500 text-xs mt-1">Baixe o PDF para resolver as questões.</p></div>
+                    {simulado.pdfUrl ? ( <a href={simulado.pdfUrl} target="_blank" rel="noreferrer" className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-6 py-2 rounded-lg text-xs font-bold uppercase transition flex items-center gap-2 shadow-lg"><Icon.Maximize className="w-4 h-4"/> BAIXAR CADERNO DE QUESTÕES</a> ) : ( <span className="text-red-500 text-xs font-bold bg-red-900/10 px-3 py-1 rounded">PDF Indisponível</span> )}
                 </div>
-
-                {/* Gabarito - Only show if finished/result available */}
                 <div className={`bg-[#121212] p-6 rounded-xl border border-[#333] flex flex-col items-center justify-center text-center gap-4 transition group ${!showResult ? 'opacity-50 grayscale' : 'hover:border-white/20'}`}>
-                    <div className="w-12 h-12 bg-green-500/10 rounded-full flex items-center justify-center group-hover:scale-110 transition">
-                        <Icon.Check className="w-6 h-6 text-green-500" />
-                    </div>
-                    <div>
-                        <h3 className="text-white font-bold uppercase text-sm">Gabarito Comentado</h3>
-                        <p className="text-gray-500 text-xs mt-1">{showResult ? 'Visualize as respostas e comentários.' : 'Disponível após finalizar o simulado.'}</p>
-                    </div>
-                    {simulado.gabaritoPdfUrl && showResult ? (
-                        <a 
-                            href={simulado.gabaritoPdfUrl} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            className="bg-green-600/20 hover:bg-green-600/30 text-green-500 border border-green-600/50 px-6 py-2 rounded-lg text-xs font-bold uppercase transition flex items-center gap-2 shadow-lg"
-                        >
-                            <Icon.Maximize className="w-4 h-4"/> ABRIR GABARITO
-                        </a>
-                    ) : (
-                        <button disabled className="bg-black/20 text-gray-600 border border-white/5 px-6 py-2 rounded-lg text-xs font-bold uppercase cursor-not-allowed flex items-center gap-2">
-                            <Icon.EyeOff className="w-4 h-4"/> {showResult ? 'GABARITO INDISPONÍVEL' : 'BLOQUEADO'}
-                        </button>
-                    )}
+                    <div className="w-12 h-12 bg-green-500/10 rounded-full flex items-center justify-center group-hover:scale-110 transition"><Icon.Check className="w-6 h-6 text-green-500" /></div>
+                    <div><h3 className="text-white font-bold uppercase text-sm">Gabarito Comentado</h3><p className="text-gray-500 text-xs mt-1">{showResult ? 'Visualize as respostas e comentários.' : 'Disponível após finalizar o simulado.'}</p></div>
+                    {simulado.gabaritoPdfUrl && showResult ? ( <a href={simulado.gabaritoPdfUrl} target="_blank" rel="noreferrer" className="bg-green-600/20 hover:bg-green-600/30 text-green-500 border border-green-600/50 px-6 py-2 rounded-lg text-xs font-bold uppercase transition flex items-center gap-2 shadow-lg"><Icon.Maximize className="w-4 h-4"/> ABRIR GABARITO</a> ) : ( <button disabled className="bg-black/20 text-gray-600 border border-white/5 px-6 py-2 rounded-lg text-xs font-bold uppercase cursor-not-allowed flex items-center gap-2"><Icon.EyeOff className="w-4 h-4"/> {showResult ? 'GABARITO INDISPONÍVEL' : 'BLOQUEADO'}</button> )}
                 </div>
              </div>
-
-             {confirmFinish && (
-                 <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4">
-                     <div className="bg-[#121212] border border-[#333] p-8 rounded-xl max-w-sm w-full text-center shadow-neon">
-                         <h3 className="text-xl font-bold text-white mb-2">Finalizar Simulado?</h3>
-                         <p className="text-gray-400 text-sm mb-6">Confira se marcou todas as respostas no gabarito digital abaixo.</p>
-                         <div className="flex gap-4">
-                             <button onClick={() => setConfirmFinish(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-bold text-xs">VOLTAR</button>
-                             <button onClick={finishSimulado} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded-lg font-bold text-xs shadow-lg">CONFIRMAR</button>
-                         </div>
-                     </div>
-                 </div>
-             )}
-
+             {confirmFinish && (<div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"><div className="bg-[#121212] border border-[#333] p-8 rounded-xl max-w-sm w-full text-center shadow-neon"><h3 className="text-xl font-bold text-white mb-2">Finalizar Simulado?</h3><p className="text-gray-400 text-sm mb-6">Confira se marcou todas as respostas no gabarito digital abaixo.</p><div className="flex gap-4"><button onClick={() => setConfirmFinish(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-3 rounded-lg font-bold text-xs">VOLTAR</button><button onClick={finishSimulado} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded-lg font-bold text-xs shadow-lg">CONFIRMAR</button></div></div></div>)}
              <div className="flex-1 flex flex-col bg-[#050505]">
-                {/* Result Header */}
-                {showResult && attempt && (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-                         <div className={`p-6 rounded-xl border flex flex-col justify-between ${attempt.isApproved ? 'bg-green-900/10 border-green-600/50' : 'bg-red-900/10 border-red-600/50'}`}>
-                             <div>
-                                 <h3 className={`text-2xl font-black ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'}</h3>
-                                 <p className="text-sm text-gray-300 mt-2">Sua pontuação líquida: <span className="font-bold text-white text-xl ml-1">{attempt.score} pontos</span></p>
-                             </div>
-                             <div className="mt-4">
-                                 <p className="text-xs text-gray-500">Data da realização: {formatDate(attempt.date)}</p>
-                             </div>
-                         </div>
-
-                         {/* RANKING SECTION */}
-                         <div className="bg-[#121212] border border-[#333] rounded-xl overflow-hidden flex flex-col">
-                             <div className="bg-[#1E1E1E] p-3 border-b border-[#333] flex justify-between items-center">
-                                <h4 className="text-sm font-bold text-white uppercase flex items-center gap-2"><Icon.List className="w-4 h-4 text-yellow-500"/> Ranking Geral</h4>
-                                <span className="text-[10px] text-gray-500">{ranking.length} Alunos</span>
-                             </div>
-                             <div className="flex-1 overflow-y-auto custom-scrollbar max-h-[200px]">
-                                 <table className="w-full text-left border-collapse">
-                                     <thead className="bg-black text-[10px] text-gray-500 font-bold uppercase sticky top-0">
-                                         <tr>
-                                             <th className="p-2 pl-4">Pos</th>
-                                             <th className="p-2">Aluno</th>
-                                             <th className="p-2 text-right pr-4">Nota</th>
-                                         </tr>
-                                     </thead>
-                                     <tbody>
-                                         {ranking.map((r) => (
-                                             <tr key={r.userId} className={`border-b border-[#222] text-xs ${r.isCurrentUser ? 'bg-insanus-red/10' : ''}`}>
-                                                 <td className="p-2 pl-4 font-bold text-gray-400">
-                                                     {r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `${r.rank}º`}
-                                                 </td>
-                                                 <td className={`p-2 font-bold ${r.isCurrentUser ? 'text-insanus-red' : 'text-white'}`}>
-                                                     {r.name}
-                                                     {r.isCurrentUser && ' (Você)'}
-                                                 </td>
-                                                 <td className="p-2 text-right pr-4 font-mono font-bold text-white">{r.score}</td>
-                                             </tr>
-                                         ))}
-                                     </tbody>
-                                 </table>
-                             </div>
-                         </div>
-                    </div>
-                 )}
-
-                 <div className="bg-[#121212] rounded-xl border border-[#333] p-6">
-                    <h3 className="text-white font-bold uppercase mb-6 flex items-center gap-2"><Icon.List className="w-5 h-5 text-insanus-red"/> Gabarito Digital</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {Array.from({ length: simulado.totalQuestions }).map((_, i) => {
-                            const qNum = i + 1;
-                            const userAns = answers[qNum];
-                            const correctAns = showResult ? simulado.correctAnswers[qNum] : null;
-                            const isCorrect = showResult && userAns === correctAns;
-                            
-                            return (
-                                <div key={qNum} className="flex flex-col gap-2 p-3 rounded bg-[#1A1A1A] border border-[#333]">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xs font-bold text-gray-400">Q{qNum}</span>
-                                        {showResult && (
-                                            <span className={`text-[10px] font-bold ${isCorrect ? 'text-green-500' : 'text-red-500'}`}>
-                                                {isCorrect ? 'ACERTOU' : userAns ? `GAB: ${correctAns}` : `GAB: ${correctAns}`}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="flex gap-1 justify-center">
-                                        {simulado.type === 'MULTIPLA_ESCOLHA' ? (
-                                            ['A','B','C','D','E'].slice(0, simulado.optionsCount).map(opt => (
-                                                <button 
-                                                    key={opt}
-                                                    onClick={() => handleAnswer(qNum, opt)}
-                                                    disabled={showResult}
-                                                    className={`w-8 h-8 rounded text-[10px] font-bold transition-all ${
-                                                        userAns === opt 
-                                                            ? 'bg-white text-black shadow-neon' 
-                                                            : 'bg-black border border-[#333] text-gray-500 hover:border-white/50'
-                                                    } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
-                                                >
-                                                    {opt}
-                                                </button>
-                                            ))
-                                        ) : (
-                                            ['C','E'].map(opt => (
-                                                <button 
-                                                    key={opt}
-                                                    onClick={() => handleAnswer(qNum, opt)}
-                                                    disabled={showResult}
-                                                    className={`flex-1 h-8 rounded text-[10px] font-bold transition-all ${
-                                                        userAns === opt 
-                                                            ? 'bg-white text-black' 
-                                                            : 'bg-black border border-[#333] text-gray-500 hover:border-white/50'
-                                                    } ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}
-                                                >
-                                                    {opt}
-                                                </button>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
-                            )
-                        })}
-                    </div>
-                 </div>
-
-                 {/* SUBMIT BUTTON AT THE BOTTOM */}
-                 {!showResult && (
-                     <div className="mt-8">
-                         <button 
-                             onClick={() => setConfirmFinish(true)}
-                             className="w-full bg-insanus-red hover:bg-red-700 text-white py-4 rounded-xl font-black text-sm uppercase shadow-neon transition-all transform hover:scale-[1.01] flex items-center justify-center gap-2"
-                         >
-                             <Icon.Check className="w-5 h-5"/> FINALIZAR E ENVIAR RESPOSTAS
-                         </button>
-                     </div>
-                 )}
+                {showResult && attempt && (<div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8"><div className={`p-6 rounded-xl border flex flex-col justify-between ${attempt.isApproved ? 'bg-green-900/10 border-green-600/50' : 'bg-red-900/10 border-red-600/50'}`}><div><h3 className={`text-2xl font-black ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'}</h3><p className="text-sm text-gray-300 mt-2">Sua pontuação líquida: <span className="font-bold text-white text-xl ml-1">{attempt.score} pontos</span></p></div><div className="mt-4"><p className="text-xs text-gray-500">Data da realização: {formatDate(attempt.date)}</p></div></div><div className="bg-[#121212] border border-[#333] rounded-xl overflow-hidden flex flex-col"><div className="bg-[#1E1E1E] p-3 border-b border-[#333] flex justify-between items-center"><h4 className="text-sm font-bold text-white uppercase flex items-center gap-2"><Icon.List className="w-4 h-4 text-yellow-500"/> Ranking Geral</h4><span className="text-[10px] text-gray-500">{ranking.length} Alunos</span></div><div className="flex-1 overflow-y-auto custom-scrollbar max-h-[200px]"><table className="w-full text-left border-collapse"><thead className="bg-black text-[10px] text-gray-500 font-bold uppercase sticky top-0"><tr><th className="p-2 pl-4">Pos</th><th className="p-2">Aluno</th><th className="p-2 text-right pr-4">Nota</th></tr></thead><tbody>{ranking.map((r) => (<tr key={r.userId} className={`border-b border-[#222] text-xs ${r.isCurrentUser ? 'bg-insanus-red/10' : ''}`}><td className="p-2 pl-4 font-bold text-gray-400">{r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `${r.rank}º`}</td><td className={`p-2 font-bold ${r.isCurrentUser ? 'text-insanus-red' : 'text-white'}`}>{r.name}{r.isCurrentUser && ' (Você)'}</td><td className="p-2 text-right pr-4 font-mono font-bold text-white">{r.score}</td></tr>))}</tbody></table></div></div></div>)}
+                 <div className="bg-[#121212] rounded-xl border border-[#333] p-6"><h3 className="text-white font-bold uppercase mb-6 flex items-center gap-2"><Icon.List className="w-5 h-5 text-insanus-red"/> Gabarito Digital</h3><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">{Array.from({ length: simulado.totalQuestions }).map((_, i) => { const qNum = i + 1; const userAns = answers[qNum]; const correctAns = showResult ? simulado.correctAnswers[qNum] : null; const isCorrect = showResult && userAns === correctAns; return (<div key={qNum} className="flex flex-col gap-2 p-3 rounded bg-[#1A1A1A] border border-[#333]"><div className="flex justify-between items-center"><span className="text-xs font-bold text-gray-400">Q{qNum}</span>{showResult && (<span className={`text-[10px] font-bold ${isCorrect ? 'text-green-500' : 'text-red-500'}`}>{isCorrect ? 'ACERTOU' : userAns ? `GAB: ${correctAns}` : `GAB: ${correctAns}`}</span>)}</div><div className="flex gap-1 justify-center">{simulado.type === 'MULTIPLA_ESCOLHA' ? (['A','B','C','D','E'].slice(0, simulado.optionsCount).map(opt => (<button key={opt} onClick={() => handleAnswer(qNum, opt)} disabled={showResult} className={`w-8 h-8 rounded text-[10px] font-bold transition-all ${userAns === opt ? 'bg-white text-black shadow-neon' : 'bg-black border border-[#333] text-gray-500 hover:border-white/50'} ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}>{opt}</button>))) : (['C','E'].map(opt => (<button key={opt} onClick={() => handleAnswer(qNum, opt)} disabled={showResult} className={`flex-1 h-8 rounded text-[10px] font-bold transition-all ${userAns === opt ? 'bg-white text-black' : 'bg-black border border-[#333] text-gray-500 hover:border-white/50'} ${showResult && correctAns === opt ? '!bg-green-600 !text-white !border-green-600' : ''}`}>{opt}</button>)))}</div></div>)})}</div></div>
+                 {!showResult && (<div className="mt-8"><button onClick={() => setConfirmFinish(true)} className="w-full bg-insanus-red hover:bg-red-700 text-white py-4 rounded-xl font-black text-sm uppercase shadow-neon transition-all transform hover:scale-[1.01] flex items-center justify-center gap-2"><Icon.Check className="w-5 h-5"/> FINALIZAR E ENVIAR RESPOSTAS</button></div>)}
              </div>
         </div>
     );
 };
 
-// ... [SetupWizard and Schedule Engine] ...
+// --- SETUP WIZARD ---
 const SetupWizard = ({ user, allPlans, currentPlan, onSave, onPlanAction, onUpdateUser, onSelectPlan }: { user: User, allPlans: StudyPlan[], currentPlan: StudyPlan | null, onSave: (r: Routine, l: UserLevel) => void, onPlanAction: (action: 'pause' | 'reschedule' | 'restart') => void, onUpdateUser: (u: User) => void, onSelectPlan: (id: string) => void }) => {
     const [days, setDays] = useState(user.routine?.days || {});
     const [level, setLevel] = useState<UserLevel>(user.level || 'iniciante');
-    const [nickname, setNickname] = useState(user.nickname || ''); // State for nickname
-    
-    // Password Change State
+    const [nickname, setNickname] = useState(user.nickname || '');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [changingPass, setChangingPass] = useState(false);
-    
-    // Restart Confirmation
     const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+    
+    // Feedback state for buttons
+    const [processingAction, setProcessingAction] = useState<string | null>(null);
 
-    const handleDayChange = (key: string, val: string) => {
-        setDays(prev => ({ ...prev, [key]: parseInt(val) || 0 }));
-    };
-
-    const handleSaveProfile = async () => {
-        if (nickname.length > 20) return alert("Apelido muito longo (máx 20 caracteres)");
-        const updatedUser = { ...user, nickname: nickname.trim() };
-        onUpdateUser(updatedUser);
-        await saveUserToDB(updatedUser);
-        alert("Apelido atualizado!");
-    };
-
-    const handleChangePassword = async () => {
-        if (!newPassword.trim() || !confirmPassword.trim()) return alert("Preencha os campos de senha.");
-        if (newPassword !== confirmPassword) return alert("As senhas não coincidem.");
-        if (newPassword.length < 4) return alert("A senha deve ter pelo menos 4 caracteres.");
-
-        setChangingPass(true);
-        try {
-            const updatedUser = { ...user, tempPassword: newPassword };
-            onUpdateUser(updatedUser);
-            await saveUserToDB(updatedUser);
-            alert("Senha alterada com sucesso!");
-            setNewPassword('');
-            setConfirmPassword('');
-        } catch (e) {
-            alert("Erro ao alterar senha.");
-        } finally {
-            setChangingPass(false);
-        }
-    };
-
+    const handleDayChange = (key: string, val: string) => { setDays(prev => ({ ...prev, [key]: parseInt(val) || 0 })); };
+    const handleSaveProfile = async () => { if (nickname.length > 20) return alert("Apelido muito longo (máx 20 caracteres)"); const updatedUser = { ...user, nickname: nickname.trim() }; onUpdateUser(updatedUser); await saveUserToDB(updatedUser); alert("Apelido atualizado!"); };
+    const handleChangePassword = async () => { if (!newPassword.trim() || !confirmPassword.trim()) return alert("Preencha os campos de senha."); if (newPassword !== confirmPassword) return alert("As senhas não coincidem."); if (newPassword.length < 4) return alert("A senha deve ter pelo menos 4 caracteres."); setChangingPass(true); try { const updatedUser = { ...user, tempPassword: newPassword }; onUpdateUser(updatedUser); await saveUserToDB(updatedUser); alert("Senha alterada com sucesso!"); setNewPassword(''); setConfirmPassword(''); } catch (e) { alert("Erro ao alterar senha."); } finally { setChangingPass(false); } };
     const isPlanPaused = currentPlan ? user.planConfigs?.[currentPlan.id]?.isPaused : false;
-
-    return (
-        <div className="w-full space-y-8 animate-fade-in mt-4">
-            
-            {/* PLAN SELECTION SECTION */}
-            <div className="bg-[#121212] p-8 rounded-2xl border border-[#333]">
-                <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2 border-b border-[#333] pb-4">
-                    <Icon.Book className="w-5 h-5 text-insanus-red"/> MEUS PLANOS DISPONÍVEIS
-                </h3>
-                {allPlans.length === 0 ? (
-                    <div className="text-gray-500 italic text-sm">Nenhum plano liberado para sua conta. Contate o suporte.</div>
-                ) : (
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                        {allPlans.map(plan => {
-                            const isActive = currentPlan?.id === plan.id;
-                            const isPaused = user.planConfigs?.[plan.id]?.isPaused;
-                            
-                            return (
-                                <div 
-                                    key={plan.id} 
-                                    className={`relative rounded-xl border-2 overflow-hidden transition-all group flex flex-col h-full bg-[#0F0F0F] ${isActive ? 'border-insanus-red shadow-neon transform scale-[1.02]' : 'border-[#333] hover:border-gray-500'}`}
-                                >
-                                    {/* Cover Image - Square Aspect Ratio for 1080x1080 */}
-                                    <div className="aspect-square w-full bg-gray-800 relative overflow-hidden border-b border-[#333]">
-                                        {plan.coverImage ? (
-                                            <img src={plan.coverImage} alt={plan.name} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" />
-                                        ) : (
-                                            <div className="flex items-center justify-center h-full w-full bg-gradient-to-br from-gray-800 to-black">
-                                                <Icon.Image className="w-12 h-12 text-gray-600"/>
-                                            </div>
-                                        )}
-                                        {/* Badges */}
-                                        <div className="absolute top-2 right-2 flex gap-1">
-                                            {isActive && (
-                                                <span className="bg-insanus-red text-white text-[8px] font-black px-2 py-1 rounded uppercase tracking-wider shadow-sm">
-                                                    {isPaused ? 'PAUSADO' : 'ATIVO'}
-                                                </span>
-                                            )}
-                                            {!isActive && (
-                                                <span className="bg-black/60 backdrop-blur-sm text-gray-300 border border-white/10 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-wider">
-                                                    DISPONÍVEL
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Content */}
-                                    <div className="p-3 flex-1 flex flex-col">
-                                        <div className="mb-2">
-                                            <span className="text-[9px] text-gray-500 font-bold uppercase block mb-1 truncate">{(plan.category || 'GERAL').replace(/_/g, ' ')}</span>
-                                            <h4 className={`font-black text-sm leading-tight line-clamp-2 ${isActive ? 'text-white' : 'text-gray-300'}`}>{plan.name}</h4>
-                                        </div>
-                                        
-                                        <div className="flex items-center gap-2 mt-auto pt-2">
-                                            {isActive ? (
-                                                <div className="w-full text-center py-2 bg-insanus-red/10 border border-insanus-red rounded text-insanus-red text-[10px] font-bold uppercase">
-                                                    SELECIONADO
-                                                </div>
-                                            ) : (
-                                                <button 
-                                                    onClick={() => onSelectPlan(plan.id)}
-                                                    className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 rounded text-gray-300 hover:text-white text-[10px] font-bold uppercase transition flex items-center justify-center gap-2"
-                                                >
-                                                    ESCOLHER
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            )
-                        })}
-                    </div>
-                )}
-            </div>
-
-            {currentPlan && (
-                <div className="bg-[#121212] p-6 rounded-2xl border border-[#333] relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-insanus-red"></div>
-                    <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Icon.Edit className="w-5 h-5"/> GESTÃO DO PLANO ATUAL ({currentPlan.name})</h3>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div className="bg-[#1E1E1E] p-4 rounded-xl border border-[#333]">
-                            <h4 className="font-bold text-gray-300 text-sm mb-2">STATUS DO PLANO</h4>
-                            <p className="text-xs text-gray-500 mb-4">Pausar o plano interrompe a geração de novas metas diárias até que você retorne.</p>
-                            <button 
-                                onClick={() => onPlanAction('pause')}
-                                className={`w-full py-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition ${isPlanPaused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-yellow-600 hover:bg-yellow-500 text-white'}`}
-                            >
-                                {isPlanPaused ? <Icon.Play className="w-4 h-4"/> : <Icon.Pause className="w-4 h-4"/>}
-                                {isPlanPaused ? 'RETOMAR PLANO' : 'PAUSAR PLANO'}
-                            </button>
-                        </div>
-
-                        <div className="bg-[#1E1E1E] p-4 rounded-xl border border-[#333]">
-                            <h4 className="font-bold text-gray-300 text-sm mb-2">ATRASOS E IMPREVISTOS</h4>
-                            <p className="text-xs text-gray-500 mb-4">Replanejar define a data de início para HOJE, redistribuindo todas as metas pendentes.</p>
-                            <button 
-                                onClick={() => { 
-                                    // eslint-disable-next-line no-restricted-globals
-                                    if(confirm("Isso vai reorganizar todo o cronograma futuro a partir de hoje. Continuar?")) onPlanAction('reschedule'); 
-                                }}
-                                className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition"
-                            >
-                                <Icon.RefreshCw className="w-4 h-4"/>
-                                REPLANEJAR ATRASOS
-                            </button>
-                        </div>
-
-                        <div className="bg-red-900/10 p-4 rounded-xl border border-red-900/30 flex flex-col justify-between">
-                            <div>
-                                <h4 className="font-bold text-red-500 text-sm mb-2 flex items-center gap-2"><Icon.Trash className="w-4 h-4"/> ZONA DE PERIGO</h4>
-                                <p className="text-xs text-red-400 mb-4">Deseja recomeçar do zero? Isso apagará o progresso deste plano.</p>
-                            </div>
-                            <button 
-                                onClick={() => setShowRestartConfirm(true)}
-                                className="w-full py-3 bg-transparent border border-red-600 text-red-500 hover:bg-red-600 hover:text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition"
-                            >
-                                REINICIAR PLANO
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            <div className="bg-[#121212] p-8 rounded-2xl border border-[#333]">
-                <div className="text-center mb-10">
-                    <Icon.Clock className="w-16 h-16 text-insanus-red mx-auto mb-4" />
-                    <h2 className="text-3xl font-black text-white uppercase tracking-tight">Configuração de Rotina</h2>
-                    <p className="text-gray-400 mt-2 text-sm">Defina seu ritmo e disponibilidade.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-                    <div>
-                        <h3 className="text-lg font-bold text-white mb-4 border-b border-[#333] pb-2 flex items-center gap-2">
-                            <Icon.User className="w-4 h-4 text-insanus-red"/> SEU NÍVEL
-                        </h3>
-                        <div className="space-y-3">
-                            {[
-                                { id: 'iniciante', label: 'Iniciante', desc: 'Ritmo mais lento de leitura.' },
-                                { id: 'intermediario', label: 'Intermediário', desc: 'Ritmo médio e constante.' },
-                                { id: 'avancado', label: 'Avançado', desc: 'Leitura dinâmica e foco em revisão.' }
-                            ].map((opt) => (
-                                <div 
-                                    key={opt.id}
-                                    onClick={() => setLevel(opt.id as UserLevel)}
-                                    className={`p-3 rounded-xl border cursor-pointer transition-all ${level === opt.id ? 'bg-insanus-red/20 border-insanus-red shadow-neon' : 'bg-[#1A1A1A] border-[#333] hover:border-[#555]'}`}
-                                >
-                                    <div className="flex justify-between items-center mb-1">
-                                        <span className={`font-bold uppercase text-sm ${level === opt.id ? 'text-white' : 'text-gray-400'}`}>{opt.label}</span>
-                                        {level === opt.id && <Icon.Check className="w-4 h-4 text-insanus-red"/>}
-                                    </div>
-                                    <p className="text-[10px] text-gray-500">{opt.desc}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div>
-                        <h3 className="text-lg font-bold text-white mb-4 border-b border-[#333] pb-2 flex items-center gap-2">
-                            <Icon.Calendar className="w-4 h-4 text-insanus-red"/> DISPONIBILIDADE (MIN)
-                        </h3>
-                        <div className="space-y-2">
-                            {WEEKDAYS.map(d => (
-                                <div key={d.key} className="flex items-center justify-between bg-[#1A1A1A] p-2 px-3 rounded border border-[#333] hover:border-[#555] transition">
-                                    <span className="text-xs font-bold text-gray-300 uppercase">{d.label}</span>
-                                    <div className="flex items-center gap-2">
-                                        <input 
-                                            type="number" 
-                                            value={days[d.key] || ''} 
-                                            onChange={e => handleDayChange(d.key, e.target.value)}
-                                            placeholder="0"
-                                            className="w-16 bg-[#050505] border border-[#333] rounded p-1 text-right text-white font-mono text-sm focus:border-insanus-red outline-none"
-                                        />
-                                        <span className="text-[10px] text-gray-600">min</span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-
-                <button onClick={() => onSave({ days }, level)} className="w-full mt-10 bg-insanus-red hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow-neon transition transform hover:scale-[1.01] flex items-center justify-center gap-2">
-                    <Icon.RefreshCw className="w-5 h-5"/> SALVAR ROTINA E NÍVEL
-                </button>
-            </div>
-
-            {/* PROFILE SETTINGS SECTION */}
-            <div className="bg-[#121212] p-8 rounded-2xl border border-[#333]">
-                <h3 className="text-lg font-bold text-white mb-6 border-b border-[#333] pb-2 flex items-center gap-2">
-                    <Icon.User className="w-4 h-4 text-insanus-red"/> PERFIL E RANKING
-                </h3>
-                <div className="flex flex-col md:flex-row gap-4 items-end">
-                    <div className="flex-1 w-full">
-                        <label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Apelido (Exibido no Ranking)</label>
-                        <input 
-                            type="text"
-                            value={nickname} 
-                            onChange={e => setNickname(e.target.value)} 
-                            className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" 
-                            placeholder="Como você quer ser visto"
-                            maxLength={20}
-                        />
-                    </div>
-                    <button 
-                        onClick={handleSaveProfile} 
-                        className="bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg border border-gray-700 transition flex items-center justify-center gap-2 shrink-0 h-[46px]"
-                    >
-                        SALVAR PERFIL
-                    </button>
-                </div>
-            </div>
-
-            {/* PASSWORD CHANGE SECTION */}
-            <div className="bg-[#121212] p-8 rounded-2xl border border-[#333]">
-                <h3 className="text-lg font-bold text-white mb-6 border-b border-[#333] pb-2 flex items-center gap-2">
-                    <Icon.Eye className="w-4 h-4 text-insanus-red"/> SEGURANÇA E ACESSO
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Nova Senha</label>
-                        <input 
-                            type="password"
-                            value={newPassword} 
-                            onChange={e => setNewPassword(e.target.value)} 
-                            className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" 
-                            placeholder="Mínimo 4 caracteres"
-                        />
-                    </div>
-                    <div>
-                        <label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Confirmar Nova Senha</label>
-                        <input 
-                            type="password"
-                            value={confirmPassword} 
-                            onChange={e => setConfirmPassword(e.target.value)} 
-                            className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" 
-                            placeholder="Repita a senha"
-                        />
-                    </div>
-                </div>
-                <button 
-                    onClick={handleChangePassword} 
-                    disabled={changingPass}
-                    className="w-full mt-6 bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 rounded-xl border border-gray-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                    {changingPass ? 'SALVANDO...' : 'ALTERAR SENHA'}
-                </button>
-            </div>
-        </div>
-    );
-};
-
-const expandCycleItems = (cycle: Cycle, plan: StudyPlan): CycleItem[] => {
-    const expandedItems: CycleItem[] = [];
-    cycle.items.forEach(item => {
-        if (item.folderId) {
-            const folderDisciplines = plan.disciplines
-                .filter(d => d.folderId === item.folderId)
-                .sort((a, b) => a.order - b.order);
-            folderDisciplines.forEach(d => {
-                expandedItems.push({
-                    disciplineId: d.id,
-                    subjectsCount: item.subjectsCount
-                });
-            });
-        } else if (item.disciplineId) {
-            expandedItems.push(item);
-        } else if (item.simuladoId) {
-            expandedItems.push(item);
+    
+    const handleActionClick = async (action: 'pause' | 'reschedule' | 'restart') => {
+        if (action === 'reschedule') {
+             // eslint-disable-next-line no-restricted-globals
+             if(confirm("Isso vai reorganizar todo o cronograma futuro a partir de hoje. Continuar?")) {
+                 setProcessingAction(action);
+                 await new Promise(r => setTimeout(r, 500)); // Visual feedback
+                 await onPlanAction(action);
+                 setProcessingAction(null);
+             }
+        } else {
+             await onPlanAction(action);
         }
-    });
-    return expandedItems;
+    };
+
+    return (<div className="w-full space-y-8 animate-fade-in mt-4"><div className="bg-[#121212] p-8 rounded-2xl border border-[#333]"><h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2 border-b border-[#333] pb-4"><Icon.Book className="w-5 h-5 text-insanus-red"/> MEUS PLANOS DISPONÍVEIS</h3>{allPlans.length === 0 ? (<div className="text-gray-500 italic text-sm">Nenhum plano liberado para sua conta. Contate o suporte.</div>) : (<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">{allPlans.map(plan => { const isActive = currentPlan?.id === plan.id; const isPaused = user.planConfigs?.[plan.id]?.isPaused; return (<div key={plan.id} className={`relative rounded-xl border-2 overflow-hidden transition-all group flex flex-col h-full bg-[#0F0F0F] ${isActive ? 'border-insanus-red shadow-neon transform scale-[1.02]' : 'border-[#333] hover:border-gray-500'}`}><div className="aspect-square w-full bg-gray-800 relative overflow-hidden border-b border-[#333]">{plan.coverImage ? ( <img src={plan.coverImage} alt={plan.name} className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" /> ) : ( <div className="flex items-center justify-center h-full w-full bg-gradient-to-br from-gray-800 to-black"><Icon.Image className="w-12 h-12 text-gray-600"/></div> )}<div className="absolute top-2 right-2 flex gap-1">{isActive && ( <span className="bg-insanus-red text-white text-[8px] font-black px-2 py-1 rounded uppercase tracking-wider shadow-sm">{isPaused ? 'PAUSADO' : 'ATIVO'}</span> )}{!isActive && ( <span className="bg-black/60 backdrop-blur-sm text-gray-300 border border-white/10 text-[8px] font-bold px-2 py-1 rounded uppercase tracking-wider">DISPONÍVEL</span> )}</div></div><div className="p-3 flex-1 flex flex-col"><div className="mb-2"><span className="text-[9px] text-gray-500 font-bold uppercase block mb-1 truncate">{(plan.category || 'GERAL').replace(/_/g, ' ')}</span><h4 className={`font-black text-sm leading-tight line-clamp-2 ${isActive ? 'text-white' : 'text-gray-300'}`}>{plan.name}</h4></div><div className="flex items-center gap-2 mt-auto pt-2">{isActive ? ( <div className="w-full text-center py-2 bg-insanus-red/10 border border-insanus-red rounded text-insanus-red text-[10px] font-bold uppercase">SELECIONADO</div> ) : ( <button onClick={() => onSelectPlan(plan.id)} className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 rounded text-gray-300 hover:text-white text-[10px] font-bold uppercase transition flex items-center justify-center gap-2">ESCOLHER</button> )}</div></div></div>) })}</div>)}</div>{currentPlan && (<div className="bg-[#121212] p-6 rounded-2xl border border-[#333] relative overflow-hidden"><div className="absolute top-0 left-0 w-1 h-full bg-insanus-red"></div><h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Icon.Edit className="w-5 h-5"/> GESTÃO DO PLANO ATUAL ({currentPlan.name})</h3><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"><div className="bg-[#1E1E1E] p-4 rounded-xl border border-[#333]"><h4 className="font-bold text-gray-300 text-sm mb-2">STATUS DO PLANO</h4><p className="text-xs text-gray-500 mb-4">Pausar o plano interrompe a geração de novas metas diárias até que você retorne.</p><button onClick={() => onPlanAction('pause')} className={`w-full py-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition ${isPlanPaused ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-yellow-600 hover:bg-yellow-500 text-white'}`}>{isPlanPaused ? <Icon.Play className="w-4 h-4"/> : <Icon.Pause className="w-4 h-4"/>}{isPlanPaused ? 'RETOMAR PLANO' : 'PAUSAR PLANO'}</button></div><div className="bg-[#1E1E1E] p-4 rounded-xl border border-[#333]"><h4 className="font-bold text-gray-300 text-sm mb-2">ATRASOS E IMPREVISTOS</h4><p className="text-xs text-gray-500 mb-4">Replanejar define a data de início para HOJE, redistribuindo todas as metas pendentes.</p><button onClick={() => handleActionClick('reschedule')} disabled={!!processingAction} className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition">{processingAction === 'reschedule' ? <Icon.RefreshCw className="w-4 h-4 animate-spin"/> : <Icon.RefreshCw className="w-4 h-4"/>}{processingAction === 'reschedule' ? 'PROCESSANDO...' : 'REPLANEJAR ATRASOS'}</button></div><div className="bg-red-900/10 p-4 rounded-xl border border-red-900/30 flex flex-col justify-between"><div><h4 className="font-bold text-red-500 text-sm mb-2 flex items-center gap-2"><Icon.Trash className="w-4 h-4"/> ZONA DE PERIGO</h4><p className="text-xs text-red-400 mb-4">Deseja recomeçar do zero? Isso apagará o progresso deste plano.</p></div><button onClick={() => setShowRestartConfirm(true)} className="w-full py-3 bg-transparent border border-red-600 text-red-500 hover:bg-red-600 hover:text-white rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition">REINICIAR PLANO</button></div></div></div>)}<div className="bg-[#121212] p-8 rounded-2xl border border-[#333]"><div className="text-center mb-10"><Icon.Clock className="w-16 h-16 text-insanus-red mx-auto mb-4" /><h2 className="text-3xl font-black text-white uppercase tracking-tight">Configuração de Rotina</h2><p className="text-gray-400 mt-2 text-sm">Defina seu ritmo e disponibilidade.</p></div><div className="grid grid-cols-1 md:grid-cols-2 gap-12"><div><h3 className="text-lg font-bold text-white mb-4 border-b border-[#333] pb-2 flex items-center gap-2"><Icon.User className="w-4 h-4 text-insanus-red"/> SEU NÍVEL</h3><div className="space-y-3">{[{ id: 'iniciante', label: 'Iniciante', desc: 'Ritmo mais lento de leitura.' }, { id: 'intermediario', label: 'Intermediário', desc: 'Ritmo médio e constante.' }, { id: 'avancado', label: 'Avançado', desc: 'Leitura dinâmica e foco em revisão.' }].map((opt) => (<div key={opt.id} onClick={() => setLevel(opt.id as UserLevel)} className={`p-3 rounded-xl border cursor-pointer transition-all ${level === opt.id ? 'bg-insanus-red/20 border-insanus-red shadow-neon' : 'bg-[#1A1A1A] border-[#333] hover:border-[#555]'}`}><div className="flex justify-between items-center mb-1"><span className={`font-bold uppercase text-sm ${level === opt.id ? 'text-white' : 'text-gray-400'}`}>{opt.label}</span>{level === opt.id && <Icon.Check className="w-4 h-4 text-insanus-red"/>}</div><p className="text-[10px] text-gray-500">{opt.desc}</p></div>))}</div></div><div><h3 className="text-lg font-bold text-white mb-4 border-b border-[#333] pb-2 flex items-center gap-2"><Icon.Calendar className="w-4 h-4 text-insanus-red"/> DISPONIBILIDADE (MIN)</h3><div className="space-y-2">{WEEKDAYS.map(d => (<div key={d.key} className="flex items-center justify-between bg-[#1A1A1A] p-2 px-3 rounded border border-[#333] hover:border-[#555] transition"><span className="text-xs font-bold text-gray-300 uppercase">{d.label}</span><div className="flex items-center gap-2"><input type="number" value={days[d.key] || ''} onChange={e => handleDayChange(d.key, e.target.value)} placeholder="0" className="w-16 bg-[#050505] border border-[#333] rounded p-1 text-right text-white font-mono text-sm focus:border-insanus-red outline-none"/><span className="text-[10px] text-gray-600">min</span></div></div>))}</div></div></div><button onClick={() => onSave({ days }, level)} className="w-full mt-10 bg-insanus-red hover:bg-red-600 text-white font-bold py-4 rounded-xl shadow-neon transition transform hover:scale-[1.01] flex items-center justify-center gap-2"><Icon.RefreshCw className="w-5 h-5"/> SALVAR ROTINA E NÍVEL</button></div><div className="bg-[#121212] p-8 rounded-2xl border border-[#333]"><h3 className="text-lg font-bold text-white mb-6 border-b border-[#333] pb-2 flex items-center gap-2"><Icon.User className="w-4 h-4 text-insanus-red"/> PERFIL E RANKING</h3><div className="flex flex-col md:flex-row gap-4 items-end"><div className="flex-1 w-full"><label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Apelido (Exibido no Ranking)</label><input type="text" value={nickname} onChange={e => setNickname(e.target.value)} className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" placeholder="Como você quer ser visto" maxLength={20}/></div><button onClick={handleSaveProfile} className="bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg border border-gray-700 transition flex items-center justify-center gap-2 shrink-0 h-[46px]">SALVAR PERFIL</button></div></div><div className="bg-[#121212] p-8 rounded-2xl border border-[#333]"><h3 className="text-lg font-bold text-white mb-6 border-b border-[#333] pb-2 flex items-center gap-2"><Icon.Eye className="w-4 h-4 text-insanus-red"/> SEGURANÇA E ACESSO</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Nova Senha</label><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" placeholder="Mínimo 4 caracteres"/></div><div><label className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Confirmar Nova Senha</label><input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full bg-black p-3 rounded-lg border border-white/10 text-white text-sm focus:border-insanus-red focus:outline-none placeholder-gray-700" placeholder="Repita a senha"/></div></div><button onClick={handleChangePassword} disabled={changingPass} className="w-full mt-6 bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 rounded-xl border border-gray-700 transition flex items-center justify-center gap-2 disabled:opacity-50">{changingPass ? 'SALVANDO...' : 'ALTERAR SENHA'}</button></div></div>);
 };
 
-const isSimuladoCompleted = (simuladoId: string, attempts: SimuladoAttempt[]) => {
-    return attempts.some(a => a.simuladoId === simuladoId);
-};
-
-const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: string, completedGoals: string[], userLevel: UserLevel, isPaused: boolean, allSimulados: Simulado[], userAttempts: SimuladoAttempt[]): Record<string, ScheduledItem[]> => {
-    const schedule: Record<string, ScheduledItem[]> = {};
+// --- SCHEDULE GENERATOR & HELPERS ---
+const expandCycleItems = (cycle: Cycle, plan: StudyPlan): CycleItem[] => { const expandedItems: CycleItem[] = []; cycle.items.forEach(item => { if (item.folderId) { const folderDisciplines = plan.disciplines.filter(d => d.folderId === item.folderId).sort((a, b) => a.order - b.order); folderDisciplines.forEach(d => { expandedItems.push({ disciplineId: d.id, subjectsCount: item.subjectsCount }); }); } else if (item.disciplineId) { expandedItems.push(item); } else if (item.simuladoId) { expandedItems.push(item); } }); return expandedItems; };
+const isSimuladoCompleted = (simuladoId: string, attempts: SimuladoAttempt[]) => { return attempts.some(a => a.simuladoId === simuladoId); };
+const generateSchedule = (plan: StudyPlan, routine: Routine, startDateStr: string, completedGoalsArr: string[], userLevel: UserLevel, isPaused: boolean, allSimulados: Simulado[], userAttempts: SimuladoAttempt[]): Record<string, ScheduledItem[]> => { 
+    const schedule: Record<string, ScheduledItem[]> = {}; 
     if (isPaused) return {}; 
-    if (!plan || !plan.cycles || plan.cycles.length === 0) return {};
+    if (!plan || !plan.cycles || plan.cycles.length === 0) return {}; 
+    const hasAvailability = Object.values(routine.days || {}).some(v => v > 0); 
+    if (!hasAvailability) return {}; 
     
-    const hasAvailability = Object.values(routine.days || {}).some(v => v > 0);
-    if (!hasAvailability) return {};
+    // Optimize Lookups
+    const completedGoals = new Set(completedGoalsArr);
 
-    const startDate = new Date((startDateStr || getTodayStr()) + 'T00:00:00');
-    const MAX_DAYS = 90; 
+    const startDate = new Date((startDateStr || getTodayStr()) + 'T00:00:00'); 
+    const MAX_DAYS = 365; // Extended for longer plans/backlogs
     
-    const disciplineQueues: Record<string, Goal[]> = {};
-    plan.disciplines.forEach(d => {
-        const flatGoals: Goal[] = [];
-        const sortedSubjects = [...d.subjects].sort((a,b) => a.order - b.order);
-        sortedSubjects.forEach(s => {
-             const sortedGoals = [...s.goals].sort((a,b) => a.order - b.order);
-             sortedGoals.forEach(g => {
-                 (g as any)._subjectName = s.name;
-                 (g as any)._disciplineName = d.name;
-                 flatGoals.push(g);
-             });
-        });
-        disciplineQueues[d.id] = flatGoals;
-    });
-
-    const disciplinePointers: Record<string, number> = {};
-    plan.disciplines.forEach(d => { disciplinePointers[d.id] = 0; });
-
-    let currentCycleIndex = 0;
-    let currentItemIndex = 0;
-
-    for (let dayOffset = 0; dayOffset < MAX_DAYS; dayOffset++) {
-        const currentDate = new Date(startDate);
-        currentDate.setDate(startDate.getDate() + dayOffset);
-        const dateStr = currentDate.toISOString().split('T')[0];
-        const dayName = getDayName(dateStr);
+    const disciplineQueues: Record<string, Goal[]> = {}; 
+    plan.disciplines.forEach(d => { 
+        const flatGoals: Goal[] = []; 
+        const sortedSubjects = [...d.subjects].sort((a,b) => a.order - b.order); 
+        sortedSubjects.forEach(s => { 
+            const sortedGoals = [...s.goals].sort((a,b) => a.order - b.order); 
+            sortedGoals.forEach(g => { (g as any)._subjectName = s.name; (g as any)._disciplineName = d.name; flatGoals.push(g); }); 
+        }); 
+        disciplineQueues[d.id] = flatGoals; 
+    }); 
+    
+    const disciplinePointers: Record<string, number> = {}; 
+    plan.disciplines.forEach(d => { disciplinePointers[d.id] = 0; }); 
+    
+    let currentCycleIndex = 0; 
+    let currentItemIndex = 0; 
+    
+    for (let dayOffset = 0; dayOffset < MAX_DAYS; dayOffset++) { 
+        const currentDate = new Date(startDate); 
+        currentDate.setDate(startDate.getDate() + dayOffset); 
+        const dateStr = currentDate.toISOString().split('T')[0]; 
+        const dayName = getDayName(dateStr); 
+        let minutesAvailable = routine.days[dayName] || 0; 
+        const dayItems: ScheduledItem[] = []; 
         
-        let minutesAvailable = routine.days[dayName] || 0;
-        const dayItems: ScheduledItem[] = [];
-
-        if (minutesAvailable === 0) continue;
-
-        let itemsProcessedToday = 0;
-        let safetyLoop = 0;
-
-        while (minutesAvailable > 0 && safetyLoop < 50) {
-            safetyLoop++;
-            const cycle = plan.cycles[currentCycleIndex];
+        if (minutesAvailable === 0) continue; 
+        
+        let itemsProcessedToday = 0; 
+        let safetyLoop = 0; 
+        
+        // Increased safety loop for large plans with many completed items
+        while (minutesAvailable > 0 && safetyLoop < 100000) { 
+            safetyLoop++; 
+            const cycle = plan.cycles[currentCycleIndex]; 
+            if (!cycle) { 
+                if (plan.cycleSystem === 'rotativo' && plan.cycles.length > 0) { 
+                    currentCycleIndex = 0; 
+                    currentItemIndex = 0; 
+                    continue; 
+                } 
+                break; 
+            } 
             
-            if (!cycle) {
-                if (plan.cycleSystem === 'rotativo' && plan.cycles.length > 0) {
-                    currentCycleIndex = 0;
-                    currentItemIndex = 0;
-                    continue;
-                }
-                break;
-            }
-
-            const activeItems = expandCycleItems(cycle, plan);
-            const cycleItem = activeItems[currentItemIndex];
-            if (!cycleItem) {
-                currentCycleIndex++;
-                currentItemIndex = 0;
-                continue;
-            }
-
-            if (cycleItem.simuladoId) {
-                const simulado = allSimulados.find(s => s.id === cycleItem.simuladoId);
-                const isCompleted = isSimuladoCompleted(cycleItem.simuladoId, userAttempts);
-                if (isCompleted) {
-                    currentItemIndex++;
-                    continue;
-                }
-                if (simulado) {
+            const activeItems = expandCycleItems(cycle, plan); 
+            const cycleItem = activeItems[currentItemIndex]; 
+            
+            if (!cycleItem) { 
+                currentCycleIndex++; 
+                currentItemIndex = 0; 
+                continue; 
+            } 
+            
+            if (cycleItem.simuladoId) { 
+                const simulado = allSimulados.find(s => s.id === cycleItem.simuladoId); 
+                const isCompleted = isSimuladoCompleted(cycleItem.simuladoId, userAttempts); 
+                if (isCompleted) { 
+                    currentItemIndex++; 
+                    continue; 
+                } 
+                if (simulado) { 
                     const estDuration = simulado.totalQuestions * 3; 
-                    if (itemsProcessedToday === 0 || minutesAvailable > 60) {
-                        const uniqueId = `${dateStr}_SIM_${simulado.id}`;
-                        dayItems.push({
-                            uniqueId, 
-                            date: dateStr, 
-                            goalId: simulado.id, 
-                            goalType: 'SIMULADO',
-                            title: `SIMULADO: ${simulado.title}`,
-                            disciplineName: 'AVALIAÇÃO',
-                            subjectName: `${simulado.totalQuestions} Questões`,
-                            duration: estDuration,
-                            isRevision: false,
-                            completed: false,
-                            simuladoData: simulado
-                        });
+                    if (itemsProcessedToday === 0 || minutesAvailable > 60) { 
+                        const uniqueId = `${dateStr}_SIM_${simulado.id}`; 
+                        dayItems.push({ uniqueId, date: dateStr, goalId: simulado.id, goalType: 'SIMULADO', title: `SIMULADO: ${simulado.title}`, disciplineName: 'AVALIAÇÃO', subjectName: `${simulado.totalQuestions} Questões`, duration: estDuration, isRevision: false, completed: false, simuladoData: simulado }); 
                         minutesAvailable = 0; 
-                        itemsProcessedToday++;
-                        currentItemIndex++;
-                    } else {
-                        minutesAvailable = 0;
-                        break;
-                    }
-                } else {
-                    currentItemIndex++;
-                }
-                continue;
-            }
-
-            if (!cycleItem.disciplineId) {
-                currentItemIndex++;
-                continue;
-            }
-
-            const queue = disciplineQueues[cycleItem.disciplineId];
-            let pointer = disciplinePointers[cycleItem.disciplineId];
-
-            if (!queue || queue.length === 0) {
-                currentItemIndex++;
-                continue;
-            }
-
-            let scheduledForThisItem = 0;
-            while (scheduledForThisItem < cycleItem.subjectsCount) {
+                        itemsProcessedToday++; 
+                        currentItemIndex++; 
+                    } else { 
+                        minutesAvailable = 0; 
+                        break; 
+                    } 
+                } else { 
+                    currentItemIndex++; 
+                } 
+                continue; 
+            } 
+            
+            if (!cycleItem.disciplineId) { 
+                currentItemIndex++; 
+                continue; 
+            } 
+            
+            const queue = disciplineQueues[cycleItem.disciplineId]; 
+            let pointer = disciplinePointers[cycleItem.disciplineId]; 
+            
+            if (!queue || queue.length === 0) { 
+                currentItemIndex++; 
+                continue; 
+            } 
+            
+            let scheduledForThisItem = 0; 
+            while (scheduledForThisItem < cycleItem.subjectsCount) { 
                 if (pointer >= queue.length) break; 
-                const goal = queue[pointer];
-                const duration = calculateGoalDuration(goal, userLevel) || 30;
-
-                if (minutesAvailable >= duration || itemsProcessedToday === 0) {
-                    const uniqueId = `${dateStr}_${cycle.id}_${cycleItem.disciplineId}_${goal.id}`;
-                    dayItems.push({
-                         uniqueId, date: dateStr, goalId: goal.id, goalType: goal.type,
-                         title: goal.title, disciplineName: (goal as any)._disciplineName || "Disciplina",
-                         subjectName: (goal as any)._subjectName || "Assunto", duration: duration,
-                         isRevision: false, completed: completedGoals.includes(goal.id), originalGoal: goal
-                    });
-                    minutesAvailable -= duration;
-                    itemsProcessedToday++;
-                    pointer++;
-                    disciplinePointers[cycleItem.disciplineId!] = pointer;
-                    scheduledForThisItem++;
-                } else {
-                    minutesAvailable = 0;
-                    break;
+                const goal = queue[pointer]; 
+                
+                // --- FIX: Optimized Skip Logic ---
+                if (completedGoals.has(goal.id)) { 
+                    pointer++; 
+                    disciplinePointers[cycleItem.disciplineId!] = pointer; 
+                    continue; // Skip without consuming time
                 }
-            }
-            currentItemIndex++;
-        }
-        if (dayItems.length > 0) schedule[dateStr] = dayItems;
-    }
-    return schedule;
+                
+                const duration = calculateGoalDuration(goal, userLevel) || 30; 
+                if (minutesAvailable >= duration || itemsProcessedToday === 0) { 
+                    const uniqueId = `${dateStr}_${cycle.id}_${cycleItem.disciplineId}_${goal.id}`; 
+                    dayItems.push({ uniqueId, date: dateStr, goalId: goal.id, goalType: goal.type, title: goal.title, disciplineName: (goal as any)._disciplineName || "Disciplina", subjectName: (goal as any)._subjectName || "Assunto", duration: duration, isRevision: false, completed: false, originalGoal: goal }); 
+                    minutesAvailable -= duration; 
+                    itemsProcessedToday++; 
+                    pointer++; 
+                    disciplinePointers[cycleItem.disciplineId!] = pointer; 
+                    scheduledForThisItem++; 
+                } else { 
+                    minutesAvailable = 0; 
+                    break; 
+                } 
+            } 
+            currentItemIndex++; 
+        } 
+        if (dayItems.length > 0) schedule[dateStr] = dayItems; 
+    } 
+    return schedule; 
 };
 
 export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToAdmin }) => {
   const [view, setView] = useState<'setup' | 'daily' | 'calendar' | 'edital' | 'simulados'>('daily');
-  const [calendarMode, setCalendarMode] = useState<'month' | 'week'>('week');
+  const [calendarMode, setCalendarMode] = useState<'month' | 'week'>('month');
   
   // Data State
   const [plans, setPlans] = useState<StudyPlan[]>([]);
@@ -867,6 +433,9 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const timerRef = useRef<any>(null);
 
+  // Modal State for Edital
+  const [detailsGoal, setDetailsGoal] = useState<Goal | null>(null);
+
   // Simulados Data
   const [simuladoClasses, setSimuladoClasses] = useState<SimuladoClass[]>([]);
   const [attempts, setAttempts] = useState<SimuladoAttempt[]>([]);
@@ -874,7 +443,29 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   const [allAttempts, setAllAttempts] = useState<SimuladoAttempt[]>([]); // For ranking
   const [allUsersMap, setAllUsersMap] = useState<Record<string, User>>({}); // For names in ranking
 
+  // Flashcards
+  const [activeFlashcards, setActiveFlashcards] = useState<Flashcard[] | null>(null);
+
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
+  const [calendarBaseDate, setCalendarBaseDate] = useState(new Date());
+  
+  // Action Processing State
+  const [processingAction, setProcessingAction] = useState<string | null>(null);
+
+  // Goal Lookup Map for Edital
+  const goalMap = useMemo(() => {
+      const map: Record<string, Goal> = {};
+      if (currentPlan) {
+          currentPlan.disciplines.forEach(d => {
+              d.subjects.forEach(s => {
+                  s.goals.forEach(g => {
+                      map[g.id] = g;
+                  });
+              });
+          });
+      }
+      return map;
+  }, [currentPlan]);
 
   useEffect(() => { loadData(); }, [user.id]); 
 
@@ -1079,6 +670,20 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       await saveUserToDB(updatedUser);
   };
 
+  const handleActionClick = async (action: 'pause' | 'reschedule' | 'restart') => {
+    if (action === 'reschedule') {
+         // eslint-disable-next-line no-restricted-globals
+         if(confirm("Isso vai reorganizar todo o cronograma futuro a partir de hoje. Continuar?")) {
+             setProcessingAction(action);
+             await new Promise(r => setTimeout(r, 500)); // Visual feedback
+             await handlePlanAction(action);
+             setProcessingAction(null);
+         }
+    } else {
+         await handlePlanAction(action);
+    }
+  };
+
   const startTimer = (goalId: string) => {
       if (activeGoalId && activeGoalId !== goalId) saveStudyTime();
       setActiveGoalId(goalId);
@@ -1132,9 +737,542 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
   }
 
   // --- VIEWS ---
-  // ... [renderDailyView, renderCalendarView, renderEditalView same as before] ...
+  const renderCalendarView = () => {
+    // Determine the days to show
+    const daysToShow: { dateStr: string, isCurrentMonth: boolean }[] = [];
+    const year = calendarBaseDate.getFullYear();
+    const month = calendarBaseDate.getMonth();
 
-  // ... [renderDailyView content...]
+    if (calendarMode === 'month') {
+        const firstDayOfMonth = new Date(year, month, 1);
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const startDayOfWeek = firstDayOfMonth.getDay(); // 0 = Sunday
+
+        // Padding previous month
+        for (let i = 0; i < startDayOfWeek; i++) {
+            const d = new Date(year, month, 1);
+            d.setDate(d.getDate() - (startDayOfWeek - i));
+            daysToShow.push({ dateStr: d.toISOString().split('T')[0], isCurrentMonth: false });
+        }
+
+        // Current Month
+        for (let i = 1; i <= daysInMonth; i++) {
+            const d = new Date(year, month, i);
+            daysToShow.push({ dateStr: d.toISOString().split('T')[0], isCurrentMonth: true });
+        }
+
+        // Padding next month (to fill 35 or 42 grid)
+        const remaining = 42 - daysToShow.length;
+        for (let i = 1; i <= remaining; i++) {
+            const d = new Date(year, month + 1, i);
+            daysToShow.push({ dateStr: d.toISOString().split('T')[0], isCurrentMonth: false });
+        }
+    } else {
+        // Weekly Mode
+        const currentDay = calendarBaseDate.getDay(); // 0-6
+        const startOfWeek = new Date(calendarBaseDate);
+        startOfWeek.setDate(calendarBaseDate.getDate() - currentDay);
+
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(startOfWeek);
+            d.setDate(startOfWeek.getDate() + i);
+            daysToShow.push({ dateStr: d.toISOString().split('T')[0], isCurrentMonth: true });
+        }
+    }
+
+    const handlePrevPeriod = () => {
+        const newDate = new Date(calendarBaseDate);
+        if (calendarMode === 'month') newDate.setMonth(newDate.getMonth() - 1);
+        else newDate.setDate(newDate.getDate() - 7);
+        setCalendarBaseDate(newDate);
+    };
+
+    const handleNextPeriod = () => {
+        const newDate = new Date(calendarBaseDate);
+        if (calendarMode === 'month') newDate.setMonth(newDate.getMonth() + 1);
+        else newDate.setDate(newDate.getDate() + 7);
+        setCalendarBaseDate(newDate);
+    };
+
+    const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+    return (
+        <div className="w-full animate-fade-in space-y-6 h-full flex flex-col">
+             <div className="flex justify-between items-center border-b border-[#333] pb-4 shrink-0">
+                 <div>
+                    <h2 className="text-3xl font-black text-white uppercase tracking-tight flex items-center gap-2">
+                        <Icon.Calendar className="w-6 h-6 text-insanus-red"/>
+                        CALENDÁRIO
+                    </h2>
+                    <p className="text-gray-500 text-xs font-mono uppercase mt-1">
+                        {monthNames[calendarBaseDate.getMonth()]} {calendarBaseDate.getFullYear()}
+                    </p>
+                 </div>
+                 <div className="flex items-center gap-4">
+                     <div className="flex bg-[#121212] rounded-lg border border-[#333] p-1">
+                         <button onClick={() => setCalendarMode('month')} className={`px-3 py-1 rounded text-xs font-bold uppercase transition ${calendarMode === 'month' ? 'bg-insanus-red text-white' : 'text-gray-500 hover:text-white'}`}>Mês</button>
+                         <button onClick={() => setCalendarMode('week')} className={`px-3 py-1 rounded text-xs font-bold uppercase transition ${calendarMode === 'week' ? 'bg-insanus-red text-white' : 'text-gray-500 hover:text-white'}`}>Semana</button>
+                     </div>
+                     <div className="flex gap-1">
+                         <button onClick={handlePrevPeriod} className="p-2 bg-[#121212] border border-[#333] rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition"><Icon.ArrowUp className="-rotate-90 w-4 h-4"/></button>
+                         <button onClick={() => setCalendarBaseDate(new Date())} className="px-3 py-2 bg-[#121212] border border-[#333] rounded-lg text-xs font-bold text-gray-400 hover:text-white hover:border-white/20 transition uppercase">Hoje</button>
+                         <button onClick={handleNextPeriod} className="p-2 bg-[#121212] border border-[#333] rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition"><Icon.ArrowDown className="-rotate-90 w-4 h-4"/></button>
+                     </div>
+                 </div>
+             </div>
+
+             <div className="flex-1 flex flex-col min-h-0 bg-[#121212] rounded-xl border border-[#333] overflow-hidden">
+                 {/* Header Days */}
+                 <div className="grid grid-cols-7 border-b border-[#333] bg-[#1E1E1E]">
+                     {WEEKDAYS.map(d => (
+                         <div key={d.key} className="text-center text-[10px] font-bold text-gray-500 uppercase py-3 border-r border-[#333] last:border-r-0">
+                             {d.label.slice(0,3)}
+                         </div>
+                     ))}
+                 </div>
+                 
+                 {/* Calendar Grid */}
+                 <div className={`grid grid-cols-7 flex-1 ${calendarMode === 'week' ? 'auto-rows-fr' : 'grid-rows-6'}`}>
+                     {daysToShow.map((day, idx) => {
+                         const items = schedule[day.dateStr] || [];
+                         const isSelected = day.dateStr === selectedDate;
+                         const isToday = day.dateStr === getTodayStr();
+                         const todayStr = getTodayStr();
+                         const isPast = day.dateStr < todayStr;
+                         const isWeek = calendarMode === 'week';
+                         
+                         return (
+                             <div 
+                                key={`${day.dateStr}-${idx}`} 
+                                onClick={() => { setSelectedDate(day.dateStr); setView('daily'); }}
+                                className={`border-r border-b border-[#333] relative flex flex-col p-2 cursor-pointer transition hover:bg-white/5 
+                                    ${!day.isCurrentMonth ? 'bg-black/40 opacity-50' : ''}
+                                    ${isSelected ? 'bg-insanus-red/10 inset-shadow-red' : ''}
+                                `}
+                             >
+                                 <div className="flex justify-between items-start mb-2">
+                                     <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-insanus-red text-white' : day.isCurrentMonth ? 'text-white' : 'text-gray-600'}`}>
+                                         {day.dateStr.split('-')[2]}
+                                     </span>
+                                 </div>
+                                 
+                                 <div className="flex-1 w-full flex flex-col gap-1 overflow-hidden">
+                                     {items.slice(0, calendarMode === 'week' ? 10 : 3).map((item, i) => {
+                                         const isLate = isPast && !item.completed;
+                                         const color = item.goalType === 'SIMULADO' ? '#3B82F6' : (item.originalGoal?.color || '#333');
+                                         
+                                         if (isWeek) {
+                                             // Block/Square Style for Week View (CORRECTED)
+                                             return (
+                                                 <div 
+                                                    key={i} 
+                                                    className={`
+                                                        relative flex flex-col justify-between p-3 rounded-lg border border-[#333] mb-2 transition-all hover:scale-[1.02]
+                                                        ${item.completed ? 'opacity-50 grayscale' : 'shadow-lg'}
+                                                        ${isLate ? 'border-red-500 shadow-[0_0_10px_rgba(255,31,31,0.3)]' : ''}
+                                                    `}
+                                                    style={{ 
+                                                        backgroundColor: '#1A1A1A', // Base dark card
+                                                        borderLeft: `4px solid ${isLate ? '#EF4444' : color}`
+                                                    }}
+                                                    title={item.title}
+                                                 >
+                                                     <div className="flex justify-between items-center mb-2">
+                                                        <span className="text-[9px] font-black bg-white/10 px-2 py-0.5 rounded text-white uppercase tracking-wider border border-white/5">
+                                                            {item.goalType.replace(/_/g, ' ')}
+                                                        </span>
+                                                        <div className="flex gap-1">
+                                                            {item.completed && <Icon.Check className="w-4 h-4 text-green-500 shrink-0"/>}
+                                                            {isLate && !item.completed && <Icon.Clock className="w-4 h-4 text-red-500 shrink-0"/>}
+                                                        </div>
+                                                     </div>
+
+                                                     <span className="text-xs font-bold text-white leading-tight line-clamp-3 mb-2">{item.title}</span>
+
+                                                     <div className="mt-auto pt-2 border-t border-white/10 w-full">
+                                                        <p className="text-[10px] text-white font-bold uppercase truncate">{item.disciplineName}</p>
+                                                        <p className="text-[9px] text-gray-300 truncate">{item.subjectName}</p>
+                                                        <div className="mt-1 flex items-center gap-1 text-[9px] text-gray-200 font-mono bg-white/5 rounded px-2 py-0.5 w-fit border border-white/5">
+                                                            <Icon.Clock className="w-3 h-3 text-gray-400"/> {item.duration} min
+                                                        </div>
+                                                     </div>
+                                                 </div>
+                                             )
+                                         }
+
+                                         // Month View Style (Slim Bar)
+                                         return (
+                                             <div 
+                                                key={i} 
+                                                className={`
+                                                    text-[9px] font-bold px-2 py-1 rounded truncate border flex items-center gap-1
+                                                    ${item.completed ? 'opacity-50 line-through' : ''}
+                                                    ${isLate ? 'border-red-500 shadow-[0_0_5px_rgba(255,31,31,0.5)] text-white' : 'border-transparent text-white'}
+                                                `}
+                                                style={{ backgroundColor: isLate ? 'rgba(255,31,31,0.1)' : color }}
+                                                title={item.title}
+                                             >
+                                                 {isLate && <Icon.Clock className="w-3 h-3 text-red-500"/>}
+                                                 {item.title}
+                                             </div>
+                                         )
+                                     })}
+                                     {items.length > (calendarMode === 'week' ? 10 : 3) && (
+                                         <span className="text-[9px] font-bold text-gray-500 pl-1">
+                                             +{items.length - (calendarMode === 'week' ? 10 : 3)} metas
+                                         </span>
+                                     )}
+                                 </div>
+                             </div>
+                         );
+                     })}
+                 </div>
+             </div>
+        </div>
+    );
+  };
+
+  const renderGoalDetailsModal = () => {
+      if (!detailsGoal) return null;
+
+      const g = detailsGoal;
+      const isActive = activeGoalId === g.id;
+      const isCompleted = user.progress.completedGoalIds.includes(g.id);
+
+      return (
+          <div className="fixed inset-0 z-[80] bg-black/95 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+              <div className="bg-[#121212] w-full max-w-2xl rounded-2xl border border-[#333] shadow-2xl overflow-hidden relative flex flex-col max-h-[90vh]">
+                  {/* Header */}
+                  <div className="p-6 border-b border-[#333] bg-[#1E1E1E]">
+                      <div className="flex justify-between items-start mb-2">
+                          <span className="text-[10px] font-black uppercase tracking-wider bg-black/40 border border-white/10 px-2 py-1 rounded text-white">{g.type}</span>
+                          <button onClick={() => setDetailsGoal(null)} className="text-gray-500 hover:text-white transition"><Icon.LogOut className="w-6 h-6"/></button>
+                      </div>
+                      <h2 className="text-2xl font-black text-white leading-tight mb-2">{g.title}</h2>
+                      {g.hasRevision && (
+                          <div className="flex items-center gap-2 text-xs text-yellow-500 font-bold bg-yellow-900/10 px-2 py-1 rounded w-fit border border-yellow-500/20">
+                              <Icon.RefreshCw className="w-3 h-3"/> 🔁 Revisão Ativa (Intervalos: {g.revisionIntervals})
+                          </div>
+                      )}
+                  </div>
+
+                  {/* Body Content */}
+                  <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6">
+                      {/* Description if any */}
+                      {g.description && (
+                          <div className="text-sm text-gray-400 bg-black/30 p-4 rounded-xl border border-white/5">
+                              {g.description}
+                          </div>
+                      )}
+
+                      {/* Content Logic based on Type */}
+                      {g.type === 'AULA' && (
+                          <div className="space-y-3">
+                              <h4 className="text-sm font-bold text-gray-300 uppercase border-b border-[#333] pb-2">Aulas Disponíveis</h4>
+                              {g.subGoals && g.subGoals.length > 0 ? (
+                                  g.subGoals.map((sub, idx) => (
+                                      <div key={idx} className="flex items-center justify-between bg-[#1A1A1A] p-3 rounded-lg border border-[#333]">
+                                          <div className="flex flex-col">
+                                              <span className="text-white font-bold text-sm">{idx + 1}. {sub.title}</span>
+                                              <span className="text-[10px] text-gray-500">{sub.duration} min</span>
+                                          </div>
+                                          {sub.link ? (
+                                              <a href={sub.link} target="_blank" rel="noreferrer" className="bg-insanus-red hover:bg-red-600 text-white px-3 py-1.5 rounded text-xs font-bold uppercase flex items-center gap-2 transition">
+                                                  <Icon.Play className="w-3 h-3"/> Assistir
+                                              </a>
+                                          ) : <span className="text-[10px] text-gray-600 italic">Sem Link</span>}
+                                      </div>
+                                  ))
+                              ) : <div className="text-gray-500 italic text-sm">Nenhuma aula cadastrada.</div>}
+                          </div>
+                      )}
+
+                      {(g.type === 'MATERIAL' || g.type === 'QUESTOES' || g.type === 'RESUMO' || g.type === 'LEI_SECA') && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              {g.pdfUrl ? (
+                                  <a href={g.pdfUrl} target="_blank" rel="noreferrer" className="flex flex-col items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-[#222] border border-[#333] hover:border-white/20 p-6 rounded-xl transition group">
+                                      <Icon.FileText className="w-8 h-8 text-blue-500 group-hover:scale-110 transition-transform"/>
+                                      <span className="text-xs font-bold text-white uppercase">Abrir Arquivo PDF</span>
+                                  </a>
+                              ) : (
+                                  <div className="flex flex-col items-center justify-center gap-2 bg-[#1A1A1A] opacity-50 p-6 rounded-xl border border-[#333]">
+                                      <Icon.FileText className="w-8 h-8 text-gray-600"/>
+                                      <span className="text-xs font-bold text-gray-500 uppercase">PDF Indisponível</span>
+                                  </div>
+                              )}
+
+                              {g.link ? (
+                                  <a href={g.link} target="_blank" rel="noreferrer" className="flex flex-col items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-[#222] border border-[#333] hover:border-white/20 p-6 rounded-xl transition group">
+                                      <Icon.Link className="w-8 h-8 text-purple-500 group-hover:scale-110 transition-transform"/>
+                                      <span className="text-xs font-bold text-white uppercase">Acessar Link Externo</span>
+                                  </a>
+                              ) : (
+                                  <div className="flex flex-col items-center justify-center gap-2 bg-[#1A1A1A] opacity-50 p-6 rounded-xl border border-[#333]">
+                                      <Icon.Link className="w-8 h-8 text-gray-600"/>
+                                      <span className="text-xs font-bold text-gray-500 uppercase">Link Indisponível</span>
+                                  </div>
+                              )}
+                          </div>
+                      )}
+
+                      {g.type === 'REVISAO' && (
+                          <div className="space-y-4">
+                              <button 
+                                  onClick={() => { setDetailsGoal(null); setActiveFlashcards(g.flashcards || []); }}
+                                  disabled={!g.flashcards || g.flashcards.length === 0}
+                                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-xl font-bold uppercase shadow-[0_0_20px_rgba(37,99,235,0.3)] transition flex items-center justify-center gap-3"
+                              >
+                                  <Icon.RefreshCw className="w-6 h-6"/>
+                                  {(!g.flashcards || g.flashcards.length === 0) ? 'Sem Flashcards' : 'Iniciar Sessão de Flashcards'}
+                              </button>
+                              
+                              {g.link && (
+                                  <a href={g.link} target="_blank" rel="noreferrer" className="block text-center text-xs font-bold text-blue-400 hover:text-white hover:underline mt-2">
+                                      Acessar Material de Apoio Externo
+                                  </a>
+                              )}
+                          </div>
+                      )}
+                  </div>
+
+                  {/* Footer Actions */}
+                  <div className="p-4 border-t border-[#333] bg-[#151515] flex gap-3">
+                      <button 
+                          onClick={() => { setDetailsGoal(null); startTimer(g.id); }}
+                          className={`flex-1 py-3 rounded-xl font-bold uppercase text-xs transition flex items-center justify-center gap-2 ${isActive ? 'bg-yellow-600 text-white' : 'bg-insanus-red text-white hover:bg-red-600'}`}
+                      >
+                          {isActive ? <><Icon.Pause className="w-4 h-4"/> Em Andamento</> : <><Icon.Play className="w-4 h-4"/> Iniciar Cronômetro</>}
+                      </button>
+                      <button 
+                          onClick={() => { toggleGoalComplete(g.id); if(!isCompleted) setDetailsGoal(null); }}
+                          className={`px-6 py-3 rounded-xl font-bold uppercase text-xs transition border flex items-center gap-2 ${isCompleted ? 'bg-green-600 text-white border-green-600' : 'bg-transparent text-gray-400 border-white/10 hover:text-white hover:border-white'}`}
+                      >
+                          <Icon.Check className="w-4 h-4"/> {isCompleted ? 'Concluída' : 'Concluir'}
+                      </button>
+                  </div>
+              </div>
+          </div>
+      );
+  };
+
+  const renderEditalView = () => {
+      if (!currentPlan?.editalVerticalizado || currentPlan.editalVerticalizado.length === 0) {
+          return <div className="text-center py-20 text-gray-500 italic">Edital Verticalizado não configurado para este plano.</div>;
+      }
+
+      // Order definition as requested
+      const typeOrder = ['aula', 'material', 'leiSeca', 'questoes', 'resumo', 'revisao'];
+      const typeLabels: Record<string, string> = {
+          aula: 'AULA',
+          material: 'MATERIAL',
+          leiSeca: 'LEI SECA',
+          questoes: 'QUESTÕES',
+          resumo: 'RESUMO',
+          revisao: 'REVISÃO'
+      };
+
+      // --- STATISTICS CALCULATION ---
+      let globalTotal = 0;
+      let globalCompleted = 0;
+      const disciplineStats: Record<string, { total: number, completed: number, percent: number }> = {};
+
+      currentPlan.editalVerticalizado.forEach(disc => {
+          let dTotal = 0;
+          let dCompleted = 0;
+
+          disc.topics.forEach(topic => {
+              typeOrder.forEach(key => {
+                  // @ts-ignore
+                  const goalId = topic.links[key];
+                  if (goalId && goalMap[goalId]) {
+                      dTotal++;
+                      globalTotal++;
+                      if (user.progress.completedGoalIds.includes(goalId)) {
+                          dCompleted++;
+                          globalCompleted++;
+                      }
+                  }
+              });
+          });
+
+          disciplineStats[disc.id] = {
+              total: dTotal,
+              completed: dCompleted,
+              percent: dTotal > 0 ? Math.round((dCompleted / dTotal) * 100) : 0
+          };
+      });
+
+      const globalPercent = globalTotal > 0 ? Math.round((globalCompleted / globalTotal) * 100) : 0;
+
+      return (
+          <div className="w-full animate-fade-in space-y-6 pb-12">
+              <h2 className="text-3xl font-black text-white mb-6 border-b border-[#333] pb-4">EDITAL VERTICALIZADO</h2>
+              
+              {/* GLOBAL PROGRESS BAR */}
+              <div className="bg-[#121212] p-6 rounded-xl border border-[#333] relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 w-1 h-full bg-insanus-red"></div>
+                  <div className="flex justify-between items-end mb-2 relative z-10">
+                      <div>
+                          <h3 className="text-lg font-black text-white uppercase tracking-tighter">Progresso Geral</h3>
+                          <p className="text-xs text-gray-500 font-mono mt-1">
+                              {globalCompleted} de {globalTotal} metas concluídas
+                          </p>
+                      </div>
+                      <div className="text-right">
+                          <span className="text-3xl font-black text-insanus-red">{globalPercent}%</span>
+                      </div>
+                  </div>
+                  <div className="w-full h-3 bg-black rounded-full overflow-hidden border border-white/5 relative z-10">
+                      <div 
+                          className="h-full bg-insanus-red shadow-[0_0_15px_rgba(255,31,31,0.5)] transition-all duration-1000 ease-out"
+                          style={{ width: `${globalPercent}%` }}
+                      ></div>
+                  </div>
+                  {/* Background Decoration */}
+                  <div className="absolute right-0 top-0 w-32 h-32 bg-insanus-red/5 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+              </div>
+
+              <div className="space-y-4">
+                  {currentPlan.editalVerticalizado.map((disc) => {
+                      const stats = disciplineStats[disc.id] || { total: 0, completed: 0, percent: 0 };
+                      const isFullyComplete = stats.percent === 100 && stats.total > 0;
+
+                      return (
+                      <div key={disc.id} className="bg-[#121212] rounded-xl border border-[#333] overflow-hidden transition-all hover:border-gray-600">
+                          <button 
+                            onClick={() => setEditalExpanded(prev => prev.includes(disc.id) ? prev.filter(id => id !== disc.id) : [...prev, disc.id])}
+                            className="w-full bg-[#1E1E1E] p-4 flex flex-col md:flex-row justify-between items-center gap-4 hover:bg-white/5 transition group"
+                          >
+                              <div className="flex items-center gap-4 w-full md:w-auto">
+                                  <div className={`w-1 h-8 rounded ${isFullyComplete ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-insanus-red'}`}></div>
+                                  <div className="text-left">
+                                      <h3 className={`font-bold uppercase text-sm md:text-base ${isFullyComplete ? 'text-green-500' : 'text-white'}`}>{disc.name}</h3>
+                                      <span className="text-[10px] text-gray-500 font-bold">{stats.completed}/{stats.total} Metas</span>
+                                  </div>
+                              </div>
+
+                              <div className="flex items-center gap-4 w-full md:w-1/3">
+                                  <div className="flex-1 flex flex-col gap-1">
+                                      <div className="flex justify-between items-center">
+                                          <span className="text-[9px] font-bold text-gray-500 uppercase">Progresso</span>
+                                          <span className={`text-[10px] font-black ${isFullyComplete ? 'text-green-500' : 'text-white'}`}>{stats.percent}%</span>
+                                      </div>
+                                      <div className="w-full h-1.5 bg-black rounded-full overflow-hidden border border-white/5">
+                                          <div 
+                                              className={`h-full transition-all duration-700 ${isFullyComplete ? 'bg-green-500' : 'bg-gray-500 group-hover:bg-white'}`}
+                                              style={{ width: `${stats.percent}%` }}
+                                          ></div>
+                                      </div>
+                                  </div>
+                                  <Icon.ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${editalExpanded.includes(disc.id) ? 'rotate-180' : ''}`}/>
+                              </div>
+                          </button>
+                          
+                          {editalExpanded.includes(disc.id) && (
+                              <div className="p-4 space-y-4 animate-fade-in bg-[#0A0A0A]">
+                                  {disc.topics.map((topic) => {
+                                      // 1. Resolve Linked Goals with SPECIFIC ORDER
+                                      const linkedGoals = typeOrder.map((key) => {
+                                          const goalId = topic.links[key as keyof typeof topic.links];
+                                          if (!goalId) return null;
+                                          const goal = goalMap[goalId];
+                                          if (!goal) return null;
+                                          const isCompleted = user.progress.completedGoalIds.includes(goalId);
+                                          return { 
+                                              typeKey: key, 
+                                              label: typeLabels[key], 
+                                              goal, 
+                                              isCompleted 
+                                          };
+                                      }).filter(Boolean) as { typeKey: string, label: string, goal: Goal, isCompleted: boolean }[];
+
+                                      // 2. Check Topic Completion (if it has links and all are done)
+                                      const isTopicComplete = linkedGoals.length > 0 && linkedGoals.every(l => l.isCompleted);
+
+                                      return (
+                                          <div key={topic.id} className="bg-[#151515] border border-[#333] rounded-xl p-4 shadow-sm">
+                                              <div className="flex items-center gap-3 mb-4 pb-2 border-b border-[#222]">
+                                                  <div className={`w-5 h-5 rounded border flex items-center justify-center ${isTopicComplete ? 'bg-green-500 border-green-500' : 'border-gray-600 bg-black'}`}>
+                                                      {isTopicComplete && <Icon.Check className="w-3 h-3 text-black font-bold"/>}
+                                                  </div>
+                                                  <span className={`text-sm font-bold uppercase ${isTopicComplete ? 'text-green-500' : 'text-gray-300'}`}>{topic.name}</span>
+                                              </div>
+                                              
+                                              {/* 3. Render Linked Goals Details - HORIZONTAL CARDS */}
+                                              {linkedGoals.length > 0 ? (
+                                                  <div className="flex flex-wrap gap-3">
+                                                      {linkedGoals.map((link, idx) => {
+                                                          const goal = link.goal;
+                                                          const isActive = activeGoalId === goal.id;
+                                                          // Use Goal Color or fallback
+                                                          const goalColor = goal.color || '#333'; 
+
+                                                          return (
+                                                              <div 
+                                                                key={idx} 
+                                                                onClick={() => setDetailsGoal(goal)}
+                                                                className={`
+                                                                    relative flex flex-col justify-between bg-[#1E1E1E] rounded-lg border min-w-[220px] flex-1 max-w-[320px] shadow-lg transition-all hover:-translate-y-1 cursor-pointer group
+                                                                    ${link.isCompleted ? 'opacity-60 grayscale border-green-900' : 'border-[#333] hover:border-gray-500'}
+                                                                    ${isActive ? 'ring-1 ring-insanus-red shadow-[0_0_15px_rgba(255,31,31,0.1)]' : ''}
+                                                                `}
+                                                                style={{ borderTop: `4px solid ${goalColor}` }}
+                                                              >
+                                                                  <div className="p-3 pb-2">
+                                                                      <div className="flex justify-between items-start mb-2">
+                                                                          <span 
+                                                                            className="text-[9px] font-black px-2 py-0.5 rounded text-white uppercase tracking-wider shadow-sm"
+                                                                            style={{ backgroundColor: goalColor }}
+                                                                          >
+                                                                              {link.label}
+                                                                          </span>
+                                                                          <div className="flex gap-1">
+                                                                              {goal.hasRevision && <Icon.RefreshCw className="w-3 h-3 text-yellow-500" title="Revisão Ativa"/>}
+                                                                              {link.isCompleted && <Icon.Check className="w-4 h-4 text-green-500"/>}
+                                                                          </div>
+                                                                      </div>
+                                                                      <h4 className="text-xs font-bold text-white leading-snug line-clamp-2 h-8" title={goal.title}>
+                                                                          {goal.title}
+                                                                      </h4>
+                                                                  </div>
+
+                                                                  {/* Control Bar */}
+                                                                  <div className="bg-black/20 p-2 border-t border-white/5 flex items-center justify-between gap-2">
+                                                                      <button 
+                                                                        onClick={(e) => { e.stopPropagation(); startTimer(goal.id); }}
+                                                                        className={`flex-1 flex items-center justify-center gap-2 py-1.5 rounded text-[10px] font-bold uppercase transition ${isActive ? 'bg-insanus-red text-white' : 'bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white'}`}
+                                                                      >
+                                                                          {isActive ? <Icon.Pause className="w-3 h-3"/> : <Icon.Play className="w-3 h-3"/>}
+                                                                          {isActive ? 'PAUSAR' : 'ESTUDAR'}
+                                                                      </button>
+
+                                                                      <div className="flex gap-1 border-l border-white/10 pl-2">
+                                                                          <div className="p-1.5 text-gray-500 group-hover:text-white transition" title="Ver Detalhes">
+                                                                              <Icon.Eye className="w-3 h-3"/>
+                                                                          </div>
+                                                                      </div>
+                                                                  </div>
+                                                              </div>
+                                                          );
+                                                      })}
+                                                  </div>
+                                              ) : (
+                                                  <div className="ml-1 text-[10px] text-gray-600 italic border border-dashed border-[#333] rounded p-2 text-center">
+                                                      Nenhuma meta vinculada neste tópico.
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          )}
+                      </div>
+                  )})}
+              </div>
+          </div>
+      );
+  };
+
   const renderDailyView = () => {
       const daySchedule = schedule[selectedDate] || [];
       const isToday = selectedDate === getTodayStr();
@@ -1164,15 +1302,12 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                               <Icon.Clock className="w-6 h-6"/> METAS EM ATRASO ({lateItems.length})
                           </h3>
                           <button 
-                              onClick={() => {
-                                  // eslint-disable-next-line no-restricted-globals
-                                  if(confirm("Isso irá mover todas as metas atrasadas e futuras para começar a partir de hoje. Continuar?")) {
-                                      handlePlanAction('reschedule');
-                                  }
-                              }} 
-                              className="bg-insanus-red hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold text-xs shadow-neon flex items-center gap-2"
+                              onClick={() => handleActionClick('reschedule')} 
+                              disabled={!!processingAction}
+                              className="bg-insanus-red hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold text-xs shadow-neon flex items-center gap-2 disabled:opacity-50"
                           >
-                              <Icon.RefreshCw className="w-4 h-4"/> REPLANEJAR TUDO
+                              {processingAction === 'reschedule' ? <Icon.RefreshCw className="w-4 h-4 animate-spin"/> : <Icon.RefreshCw className="w-4 h-4"/>}
+                              {processingAction === 'reschedule' ? 'PROCESSANDO...' : 'REPLANEJAR TUDO'}
                           </button>
                       </div>
                       <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
@@ -1195,6 +1330,13 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                       <p className="text-insanus-red font-mono text-sm uppercase">{WEEKDAYS.find(w => w.key === dayName)?.label}</p>
                   </div>
                   <div className="text-right">
+                      {isTimerRunning && (
+                       <div className="bg-[#1A1A1A] border border-insanus-red px-4 py-2 rounded-lg flex items-center gap-3 animate-pulse shadow-[0_0_15px_rgba(255,31,31,0.2)] mb-2">
+                           <div className="w-2 h-2 bg-insanus-red rounded-full animate-ping"></div>
+                           <span className="text-insanus-red font-black font-mono text-xl">{formatStopwatch(timerSeconds)}</span>
+                           <button onClick={pauseTimer} className="bg-white/10 hover:bg-white/20 p-1 rounded-full text-white"><Icon.Pause className="w-4 h-4"/></button>
+                       </div>
+                      )}
                       <div className="text-3xl font-black text-white">{daySchedule.length}</div>
                       <div className="text-[10px] text-gray-500 uppercase font-bold">Metas</div>
                   </div>
@@ -1255,7 +1397,7 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                                         </div>
                                         
                                         {!item.completed && (
-                                            <div className="mt-4 flex gap-2">
+                                            <div className="mt-4 flex gap-2 flex-wrap">
                                                 {!isActive ? (
                                                     <button onClick={() => startTimer(item.goalId)} className="flex items-center gap-2 bg-insanus-red hover:bg-red-600 px-4 py-2 rounded text-xs font-bold text-white transition shadow-neon"><Icon.Play className="w-3 h-3" /> INICIAR</button>
                                                 ) : (
@@ -1263,6 +1405,16 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                                                         {isTimerRunning ? <button onClick={pauseTimer} className="flex items-center gap-2 bg-yellow-600 px-4 py-2 rounded text-xs font-bold text-white"><Icon.Pause className="w-3 h-3" /> PAUSAR</button> : <button onClick={() => setIsTimerRunning(true)} className="flex items-center gap-2 bg-green-600 px-4 py-2 rounded text-xs font-bold text-white"><Icon.Play className="w-3 h-3" /> RETOMAR</button>}
                                                         <button onClick={() => saveStudyTime(false)} className="flex items-center gap-2 bg-gray-700 px-4 py-2 rounded text-xs font-bold text-white"><Icon.Check className="w-3 h-3" /> SALVAR TEMPO</button>
                                                     </>
+                                                )}
+                                                
+                                                {/* Flashcard Button */}
+                                                {item.goalType === 'REVISAO' && item.originalGoal?.flashcards && item.originalGoal.flashcards.length > 0 && (
+                                                    <button 
+                                                        onClick={() => setActiveFlashcards(item.originalGoal!.flashcards!)}
+                                                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-xs font-bold text-white transition shadow-[0_0_10px_rgba(37,99,235,0.4)]"
+                                                    >
+                                                        <Icon.RefreshCw className="w-3 h-3"/> PRATICAR FLASHCARDS
+                                                    </button>
                                                 )}
                                             </div>
                                         )}
@@ -1296,269 +1448,14 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
       );
   };
 
-  const renderCalendarView = () => {
-    // ... Calendar View Content (No Changes needed here) ...
-    const weekDates = getWeekDays(selectedDate);
-    const generateMonthGrid = () => {
-        const date = new Date(selectedDate);
-        const year = date.getFullYear();
-        const month = date.getMonth();
-        const firstDay = new Date(year, month, 1);
-        const startDay = firstDay.getDay();
-        const startDate = new Date(firstDay);
-        startDate.setDate(startDate.getDate() - startDay);
-        const grid = [];
-        for(let i=0; i<42; i++) {
-             const d = new Date(startDate);
-             d.setDate(d.getDate() + i);
-             grid.push(d.toISOString().split('T')[0]);
-        }
-        return grid;
-    };
-
-    const monthDates = generateMonthGrid();
-    const currentMonthName = new Date(selectedDate).toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
-    const todayStr = getTodayStr();
-
-    return (
-        <div className="w-full animate-fade-in h-[calc(100vh-100px)] flex flex-col">
-             <div className="flex justify-between items-center border-b border-[#333] pb-6 shrink-0">
-                <div>
-                    <h2 className="text-3xl font-black text-white uppercase">CALENDÁRIO</h2>
-                    <p className="text-xs text-insanus-red font-bold uppercase tracking-widest">{currentMonthName}</p>
-                </div>
-                <div className="flex items-center gap-4">
-                    <div className="flex bg-[#121212] rounded-lg p-1 border border-[#333]">
-                        <button onClick={() => setCalendarMode('week')} className={`px-4 py-2 text-xs font-bold rounded transition-all ${calendarMode === 'week' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white'}`}>SEMANAL</button>
-                        <button onClick={() => setCalendarMode('month')} className={`px-4 py-2 text-xs font-bold rounded transition-all ${calendarMode === 'month' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white'}`}>MENSAL</button>
-                    </div>
-                    <div className="flex gap-1 bg-[#121212] rounded-lg border border-[#333] p-1">
-                        <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() - (calendarMode === 'week' ? 7 : 30)); setSelectedDate(d.toISOString().split('T')[0]); }} className="p-2 hover:bg-white/10 rounded text-white transition"><Icon.ArrowUp className="-rotate-90 w-4 h-4" /></button>
-                        <button onClick={() => setSelectedDate(getTodayStr())} className="px-3 py-2 hover:bg-white/10 rounded text-[10px] font-bold text-white uppercase transition border-x border-white/5">Hoje</button>
-                        <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate() + (calendarMode === 'week' ? 7 : 30)); setSelectedDate(d.toISOString().split('T')[0]); }} className="p-2 hover:bg-white/10 rounded text-white transition"><Icon.ArrowDown className="-rotate-90 w-4 h-4" /></button>
-                    </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-7 gap-2 mb-2 mt-4 text-center shrink-0">
-                {WEEKDAYS.map(d => <div key={d.key} className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{d.label.split('-')[0]}</div>)}
-            </div>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                {calendarMode === 'week' ? (
-                    <div className="grid grid-cols-7 gap-2 h-full min-h-[600px]">
-                        {weekDates.map(dateStr => {
-                            const items = schedule[dateStr] || [];
-                            const isSelected = selectedDate === dateStr;
-                            const isToday = dateStr === getTodayStr();
-                            const hasLateGoals = dateStr < todayStr && items.some(i => !i.completed);
-
-                            return (
-                                <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setView('daily'); }} className={`rounded-xl border flex flex-col transition-all cursor-pointer group h-full bg-[#121212] ${isSelected ? 'bg-[#1E1E1E] border-insanus-red shadow-[inset_0_0_20px_rgba(255,31,31,0.1)]' : 'border-[#333] hover:border-[#555] hover:bg-[#1A1A1A]'} ${isToday ? 'ring-1 ring-insanus-red ring-offset-2 ring-offset-black' : ''} ${hasLateGoals ? 'border-red-500/50 bg-red-900/10' : ''}`}>
-                                    <div className={`text-center p-3 border-b border-[#333] ${isToday ? 'bg-insanus-red text-white' : 'bg-[#1A1A1A]'} relative`}>
-                                        <div className="text-2xl font-black">{dateStr.split('-')[2]}</div>
-                                        {hasLateGoals && <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_red] animate-pulse"></div>}
-                                    </div>
-                                    <div className="flex-1 p-2 space-y-2 overflow-y-auto custom-scrollbar">
-                                        {items.map((item, i) => {
-                                            const goalColor = item.goalType === 'SIMULADO' ? '#3B82F6' : (item.originalGoal?.color || '#FF1F1F');
-                                            return (
-                                                <div key={i} className={`p-3 rounded-lg border-l-4 bg-black shadow-lg hover:translate-y-[-2px] transition-all ${item.completed ? 'opacity-50 grayscale' : ''}`} style={{ borderLeftColor: goalColor, borderTop: '1px solid #333', borderRight: '1px solid #333', borderBottom: '1px solid #333' }}>
-                                                    <div className="flex justify-between items-start mb-1">
-                                                        <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: goalColor }}>{item.disciplineName}</span>
-                                                        {item.completed && <Icon.Check className="w-3 h-3 text-green-500" />}
-                                                    </div>
-                                                    <div className="text-xs font-bold text-white leading-snug line-clamp-3 mb-2">{item.title}</div>
-                                                    <div className="flex items-center gap-2 mt-auto">
-                                                        <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-mono text-gray-400">{item.duration}m</span>
-                                                        <span className="text-[8px] uppercase font-bold text-gray-500">{item.goalType}</span>
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-7 gap-2 h-full grid-rows-6">
-                        {monthDates.map(dateStr => {
-                            const items = schedule[dateStr] || [];
-                            const isSelected = selectedDate === dateStr;
-                            const isToday = dateStr === getTodayStr();
-                            const isCurrentMonth = dateStr.slice(0, 7) === selectedDate.slice(0, 7);
-                            const hasLateGoals = dateStr < todayStr && items.some(i => !i.completed);
-
-                            return (
-                                <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setView('daily'); }} className={`rounded-lg border p-2 flex flex-col transition-all cursor-pointer hover:bg-[#1A1A1A] min-h-[80px] ${isSelected ? 'bg-[#1E1E1E] border-insanus-red' : 'border-[#333] bg-[#121212]'} ${!isCurrentMonth ? 'opacity-30' : ''} ${hasLateGoals ? 'border-red-500/50' : ''}`}>
-                                    <div className="flex justify-between items-center mb-1">
-                                        <div className="flex items-center gap-1">
-                                            <span className={`text-xs font-bold ${isToday ? 'text-insanus-red bg-insanus-red/10 px-1.5 rounded' : 'text-gray-400'}`}>{dateStr.split('-')[2]}</span>
-                                            {hasLateGoals && <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>}
-                                        </div>
-                                        {items.length > 0 && <span className="text-[9px] text-gray-600 font-mono">{items.length}</span>}
-                                    </div>
-                                    <div className="flex-1 flex flex-col gap-1 overflow-hidden">
-                                        {items.slice(0, 3).map((item, i) => (
-                                            <div key={i} className="flex items-center gap-1">
-                                                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.completed ? 'bg-green-500' : ''}`} style={{ backgroundColor: item.completed ? undefined : item.goalType === 'SIMULADO' ? '#3B82F6' : (item.originalGoal?.color || '#333') }}></div>
-                                                <div className="text-[9px] text-gray-500 truncate leading-none">{item.disciplineName}</div>
-                                            </div>
-                                        ))}
-                                        {items.length > 3 && <div className="text-[8px] text-gray-600 text-center font-bold mt-auto">+{items.length - 3} mais</div>}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
-
-  const renderEditalView = () => {
-      if (!currentPlan?.editalVerticalizado) return <div className="p-10 text-center text-gray-500">Edital Verticalizado não configurado neste plano.</div>;
-      let totalTopics = 0;
-      let completedTopics = 0;
-      const ORDERED_LINKS = ['aula', 'material', 'questoes', 'leiSeca', 'resumo', 'revisao'];
-      const findGoal = (goalId: string) => {
-          for (const d of currentPlan.disciplines) {
-              for (const s of d.subjects) {
-                  const g = s.goals.find(g => g.id === goalId);
-                  if (g) return g;
-              }
-          }
-          return null;
-      };
-      const isTopicDone = (t: EditalTopic) => {
-          const linkedGoalIds = ORDERED_LINKS.map(type => t.links[type as keyof typeof t.links]).filter(id => !!id) as string[];
-          if (linkedGoalIds.length === 0) return false;
-          const allGoalsDone = linkedGoalIds.every(gid => user.progress.completedGoalIds.includes(gid));
-          if (!allGoalsDone) return false;
-          return linkedGoalIds.every(gid => {
-              const goal = findGoal(gid);
-              if (goal && goal.hasRevision) {
-                  const rev1 = user.progress.completedRevisionIds.includes(`${gid}_0`);
-                  const rev2 = user.progress.completedRevisionIds.includes(`${gid}_1`);
-                  return rev1 && rev2;
-              }
-              return true; 
-          });
-      };
-      currentPlan.editalVerticalizado.forEach(d => d.topics.forEach(t => { totalTopics++; if (isTopicDone(t)) completedTopics++; }));
-      const percentage = totalTopics === 0 ? 0 : Math.round((completedTopics / totalTopics) * 100);
-
-      const toggleEditalExpand = (id: string) => {
-          setEditalExpanded(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
-      };
-
-      return (
-          <div className="w-full animate-fade-in space-y-8">
-              <div className="flex items-center justify-between border-b border-[#333] pb-6">
-                  <h2 className="text-3xl font-black text-white">EDITAL <span className="text-insanus-red">VERTICALIZADO</span></h2>
-                  <div className="text-right"><div className="text-4xl font-black text-white">{percentage}%</div><div className="text-xs text-gray-500 uppercase font-bold">Concluído</div></div>
-              </div>
-              <div className="space-y-6">
-                  {currentPlan.editalVerticalizado.map(disc => {
-                      const discTotal = disc.topics.length;
-                      const discDone = disc.topics.filter(t => isTopicDone(t)).length;
-                      const discPerc = discTotal === 0 ? 0 : (discDone / discTotal) * 100;
-                      const isExpanded = editalExpanded.includes(disc.id);
-
-                      return (
-                          <div key={disc.id} className="bg-[#121212] rounded-xl border border-[#333] overflow-hidden">
-                              <div 
-                                onClick={() => toggleEditalExpand(disc.id)}
-                                className="bg-[#1E1E1E] p-4 cursor-pointer hover:bg-white/5 transition-colors"
-                              >
-                                  <div className="flex justify-between items-center mb-3">
-                                      <div className="flex items-center gap-3">
-                                          <Icon.ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                          <h3 className="font-bold text-white uppercase text-sm">{disc.name}</h3>
-                                      </div>
-                                      <div className="flex flex-col items-end">
-                                          <span className={`text-sm font-black ${discPerc === 100 ? 'text-green-500' : 'text-insanus-red'}`}>{Math.round(discPerc)}%</span>
-                                          <span className="text-[10px] font-mono text-gray-500">{discDone}/{discTotal}</span>
-                                      </div>
-                                  </div>
-                                  
-                                  {/* The Progress Bar */}
-                                  <div className="w-full bg-black rounded-full h-2 overflow-hidden border border-white/5">
-                                      <div 
-                                          className={`h-full transition-all duration-1000 ${discPerc === 100 ? 'bg-green-600 shadow-[0_0_10px_rgba(22,163,74,0.5)]' : 'bg-insanus-red shadow-neon'}`} 
-                                          style={{ width: `${discPerc}%` }}
-                                      ></div>
-                                  </div>
-                              </div>
-                              
-                              {isExpanded && (
-                                <div className="p-4 space-y-2 animate-fade-in">
-                                    {disc.topics.map(topic => {
-                                        const done = isTopicDone(topic);
-                                        return (
-                                            <div key={topic.id} className="flex flex-col gap-2 py-1 border-b border-[#333] last:border-0">
-                                                <div className="flex items-center gap-3 text-sm group">
-                                                    <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${done ? 'bg-green-600 border-green-600' : 'border-gray-600'}`}>{done && <Icon.Check className="w-3 h-3 text-white" />}</div>
-                                                    <span className={done ? 'text-gray-500 line-through' : 'text-gray-300 group-hover:text-white transition'}>{topic.name}</span>
-                                                </div>
-                                                <div className="flex flex-wrap gap-2 ml-7">
-                                                    {ORDERED_LINKS.map(type => {
-                                                        const goalId = topic.links[type as keyof typeof topic.links];
-                                                        if(!goalId) return null;
-                                                        const goal = findGoal(goalId as string);
-                                                        if(!goal) return null;
-                                                        
-                                                        const isGoalDone = user.progress.completedGoalIds.includes(goal.id);
-
-                                                        let IconComp = Icon.FileText;
-                                                        if(type === 'aula') IconComp = Icon.Play;
-                                                        if(type === 'questoes') IconComp = Icon.Code;
-                                                        if(type === 'leiSeca') IconComp = Icon.Book;
-                                                        if(type === 'resumo') IconComp = Icon.Edit;
-                                                        if(type === 'revisao') IconComp = Icon.RefreshCw;
-                                                        
-                                                        return (
-                                                            <a key={type} 
-                                                                href={goal.link || goal.pdfUrl} 
-                                                                target="_blank" 
-                                                                rel="noreferrer" 
-                                                                className={`flex items-center gap-2 px-2 py-1 rounded border text-[10px] font-bold uppercase transition hover:brightness-125 ${isGoalDone ? '!border-green-500 !bg-green-500/10 !text-green-500' : ''}`}
-                                                                style={{ 
-                                                                    borderColor: isGoalDone ? undefined : goal.color || '#333', 
-                                                                    color: isGoalDone ? undefined : goal.color || '#999', 
-                                                                    backgroundColor: isGoalDone ? undefined : (goal.color || '#000') + '15' 
-                                                                }}
-                                                            >
-                                                                <IconComp className="w-3 h-3"/>
-                                                                {goal.title}
-                                                                {isGoalDone && <Icon.Check className="w-3 h-3 ml-1" />}
-                                                            </a>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                              )}
-                          </div>
-                      )
-                  })}
-              </div>
-          </div>
-      )
-  };
-
   return (
-    <div className="flex flex-col h-full w-full bg-[#050505] text-gray-200">
-        {/* ... Rest of UserDashboard JSX ... */}
-        {/* REMOVED: activeSimulado absolute block from here. It is now handled in the main content area */}
+    <div className="flex h-full w-full bg-[#050505] text-gray-200 overflow-hidden relative">
+        {/* MODAL LAYER */}
+        {detailsGoal && renderGoalDetailsModal()}
 
         {/* PLAN SWITCH CONFIRMATION MODAL */}
         {pendingPlanId && (
-            <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-6 animate-fade-in">
+            <div className="absolute inset-0 z-[60] bg-black/90 backdrop-blur-sm flex items-center justify-center p-6 animate-fade-in">
                 <div className="bg-[#121212] border border-[#333] rounded-2xl p-8 max-w-md w-full shadow-2xl relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-full h-1 bg-insanus-red"></div>
                     <div className="flex flex-col items-center text-center">
@@ -1590,46 +1487,81 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
             </div>
         )}
 
-        <div className="h-14 border-b border-[#333] bg-[#0F0F0F] flex items-center px-8 gap-8 shrink-0 overflow-x-auto custom-scrollbar z-20 shadow-sm">
-             <div className="flex gap-6 flex-1">
-                 <button onClick={() => setView('daily')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'daily' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
-                     <Icon.Check className="w-4 h-4"/> Metas de Hoje
-                 </button>
-                 <button onClick={() => setView('calendar')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'calendar' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
-                     <Icon.Calendar className="w-4 h-4"/> Calendário
-                 </button>
-                 <button onClick={() => setView('edital')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'edital' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
-                     <Icon.List className="w-4 h-4"/> Edital
-                 </button>
-                 <button onClick={() => setView('simulados')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'simulados' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
-                     <Icon.FileText className="w-4 h-4"/> Simulados
-                 </button>
-                 <button onClick={() => setView('setup')} className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider py-4 border-b-2 transition-all ${view === 'setup' ? 'text-white border-insanus-red' : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
-                     <Icon.Clock className="w-4 h-4"/> Configuração
-                 </button>
-             </div>
-             
-             <div className="flex items-center gap-4">
-                 <div className="text-right hidden md:block">
-                     <div className="text-[9px] text-gray-500 font-bold uppercase">Tempo Total</div>
-                     <div className="text-xs font-black text-insanus-red font-mono">{formatSecondsToTime(user.progress.totalStudySeconds)}</div>
-                 </div>
-                 {(onReturnToAdmin || user.isAdmin) && (
-                     <button onClick={onReturnToAdmin} className="text-gray-500 hover:text-white p-2 rounded-full hover:bg-white/5 transition" title="Voltar para Admin">
-                         <Icon.LogOut className="w-4 h-4"/>
-                     </button>
-                 )}
-             </div>
-        </div>
+        {/* SIDEBAR FOR USER (Replacing Top Bar for consistency) */}
+        <aside className="w-64 bg-[#0F0F0F] border-r border-[#333] flex flex-col shrink-0 z-20">
+            <div className="p-6 border-b border-[#333]">
+                <div className="flex items-center gap-2 mb-1">
+                    <div className="w-2 h-6 bg-insanus-red shadow-neon rounded-full"></div>
+                    <h1 className="text-lg font-black text-white tracking-tighter">ÁREA DO <span className="text-insanus-red">ALUNO</span></h1>
+                </div>
+                <p className="text-[10px] font-mono text-gray-500">Logado como {user.nickname || user.name.split(' ')[0]}</p>
+            </div>
+            
+            <nav className="flex-1 p-4 space-y-2 overflow-y-auto custom-scrollbar">
+                <button onClick={() => setView('daily')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${view === 'daily' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
+                    <Icon.Check className="w-4 h-4"/> Metas de Hoje
+                </button>
+                <button onClick={() => setView('calendar')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${view === 'calendar' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
+                    <Icon.Calendar className="w-4 h-4"/> Calendário
+                </button>
+                <button onClick={() => setView('edital')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${view === 'edital' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
+                    <Icon.List className="w-4 h-4"/> Edital Verticalizado
+                </button>
+                <button onClick={() => setView('simulados')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${view === 'simulados' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
+                    <Icon.FileText className="w-4 h-4"/> Simulados
+                </button>
+                
+                <div className="my-4 border-t border-[#333]"></div>
+                
+                <button onClick={() => setView('setup')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${view === 'setup' ? 'bg-insanus-red text-white shadow-neon' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
+                    <Icon.Clock className="w-4 h-4"/> Configuração
+                </button>
 
+                <div className="mt-6 mb-2 px-2">
+                    <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest mb-2">Meus Planos</p>
+                    <div className="space-y-1">
+                        {plans.map(p => (
+                            <button 
+                                key={p.id} 
+                                onClick={() => initiatePlanSwitch(p.id)}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-[10px] font-bold uppercase transition border ${currentPlan?.id === p.id ? 'bg-white/5 border-insanus-red text-white' : 'border-transparent text-gray-500 hover:bg-white/5 hover:text-gray-300'}`}
+                            >
+                                {p.name}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </nav>
+
+            <div className="p-4 border-t border-[#333]">
+                <div className="mb-4">
+                     <div className="text-[9px] text-gray-500 font-bold uppercase mb-1">Tempo Total de Estudo</div>
+                     <div className="text-xl font-black text-insanus-red font-mono">{formatSecondsToTime(user.progress.totalStudySeconds)}</div>
+                </div>
+                {(onReturnToAdmin || user.isAdmin) && (
+                    <button onClick={onReturnToAdmin} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-[#333] text-xs font-bold text-gray-400 hover:text-white hover:bg-white/5 transition-all">
+                        <Icon.LogOut className="w-4 h-4"/> Voltar Admin
+                    </button>
+                )}
+            </div>
+        </aside>
+
+        {/* Main Content Area */}
         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar relative bg-[#050505]">
             {user.isAdmin && <div className="absolute top-4 right-4 bg-insanus-red/20 border border-insanus-red text-insanus-red px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest pointer-events-none z-10">Modo Admin</div>}
             
+            {activeFlashcards && (
+                <FlashcardPlayer 
+                    cards={activeFlashcards}
+                    onClose={() => setActiveFlashcards(null)}
+                />
+            )}
+
             {activeSimulado ? (
                 <SimuladoRunner 
                     user={user} 
                     classId={activeSimulado ? simuladoClasses.find(c => c.simulados.some(s => s.id === activeSimulado.id))?.id || '' : ''}
-                    simulado={activeSimulado} 
+                    simulado={activeSimulado}
                     attempt={attempts.find(a => a.simuladoId === activeSimulado.id)}
                     allAttempts={allAttempts}
                     allUsersMap={allUsersMap}
@@ -1638,31 +1570,68 @@ export const UserDashboard: React.FC<Props> = ({ user, onUpdateUser, onReturnToA
                 />
             ) : (
                 <>
-                    {view === 'setup' && <SetupWizard user={user} allPlans={plans} currentPlan={currentPlan} onSave={handleSetupSave} onPlanAction={handlePlanAction} onUpdateUser={onUpdateUser} onSelectPlan={initiatePlanSwitch} />}
+                    {view === 'setup' && (
+                        <SetupWizard 
+                            user={user} 
+                            allPlans={plans} 
+                            currentPlan={currentPlan}
+                            onSave={handleSetupSave} 
+                            onPlanAction={handleActionClick}
+                            onUpdateUser={onUpdateUser}
+                            onSelectPlan={initiatePlanSwitch}
+                        />
+                    )}
                     {view === 'daily' && renderDailyView()}
                     {view === 'calendar' && renderCalendarView()}
                     {view === 'edital' && renderEditalView()}
                     {view === 'simulados' && (
-                        <div className="w-full animate-fade-in space-y-10">
-                            <h2 className="text-3xl font-black text-white mb-8 border-b border-[#333] pb-4">SIMULADOS</h2>
-                            {simuladoClasses.map(sc => (
-                                <div key={sc.id} className="bg-[#121212] rounded-xl p-6 border border-[#333]">
-                                    <h3 className="text-xl font-black text-white mb-4">{sc.name}</h3>
-                                    <div className="grid gap-4">{sc.simulados.map(sim => {
-                                        const attempt = attempts.find(a => a.simuladoId === sim.id);
-                                        return (
-                                        <div key={sim.id} className="bg-black/40 p-4 rounded-lg flex justify-between items-center border border-[#333]">
-                                            <div>
-                                                <h4 className="font-bold text-white">{sim.title}</h4>
-                                                {attempt && <span className={`text-[10px] font-bold ${attempt.isApproved ? 'text-green-500' : 'text-red-500'}`}>{attempt.isApproved ? 'APROVADO' : 'REPROVADO'} ({attempt.score} pts)</span>}
+                        <div className="w-full animate-fade-in space-y-6 pb-12">
+                            <h2 className="text-3xl font-black text-white mb-6 border-b border-[#333] pb-4 uppercase">Simulados Disponíveis</h2>
+                            {simuladoClasses.length === 0 ? (
+                                <div className="text-center py-20 text-gray-500 italic">Nenhum simulado disponível no momento.</div>
+                            ) : (
+                                <div className="grid grid-cols-1 gap-8">
+                                    {simuladoClasses.map(cls => (
+                                        <div key={cls.id} className="bg-[#121212] rounded-xl border border-[#333] overflow-hidden">
+                                            <div className="bg-[#1E1E1E] p-4 border-b border-[#333] flex justify-between items-center">
+                                                <h3 className="font-bold text-white uppercase flex items-center gap-2">
+                                                    <Icon.List className="w-5 h-5 text-blue-500"/> {cls.name}
+                                                </h3>
+                                                <span className="text-[10px] bg-white/5 px-2 py-1 rounded text-gray-400 font-bold uppercase">{cls.simulados.length} Provas</span>
                                             </div>
-                                            <button onClick={() => setActiveSimulado(sim)} className="bg-insanus-red px-4 py-2 rounded text-xs font-bold text-white">
-                                                {attempt ? 'VER RESULTADO' : 'ACESSAR'}
-                                            </button>
+                                            <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                                {cls.simulados.map(sim => {
+                                                    const attempt = attempts.find(a => a.simuladoId === sim.id);
+                                                    return (
+                                                        <div key={sim.id} className="bg-[#151515] p-4 rounded-lg border border-[#333] hover:border-blue-500/50 transition group flex flex-col justify-between h-full">
+                                                            <div>
+                                                                <h4 className="font-bold text-white text-sm mb-1 line-clamp-2">{sim.title}</h4>
+                                                                <p className="text-xs text-gray-500 mb-4">{sim.totalQuestions} Questões • {sim.type.replace('_', ' ')}</p>
+                                                            </div>
+                                                            
+                                                            {attempt ? (
+                                                                <div className={`mt-auto p-2 rounded text-center border ${attempt.isApproved ? 'bg-green-900/20 border-green-600/30 text-green-500' : 'bg-red-900/20 border-red-600/30 text-red-500'}`}>
+                                                                    <div className="text-[10px] font-bold uppercase mb-1">{attempt.isApproved ? 'APROVADO' : 'REPROVADO'}</div>
+                                                                    <div className="text-lg font-black">{attempt.score} pts</div>
+                                                                    <button onClick={() => setActiveSimulado(sim)} className="text-[10px] underline mt-1 hover:text-white transition">Ver Resultado</button>
+                                                                </div>
+                                                            ) : (
+                                                                <button 
+                                                                    onClick={() => setActiveSimulado(sim)}
+                                                                    className="mt-auto w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded text-xs font-bold uppercase shadow-lg transition flex items-center justify-center gap-2 transform group-hover:scale-105"
+                                                                >
+                                                                    <Icon.Play className="w-3 h-3"/> INICIAR
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )
+                                                })}
+                                                {cls.simulados.length === 0 && <div className="text-gray-500 text-xs italic p-2 col-span-full text-center">Nenhum simulado cadastrado nesta turma.</div>}
+                                            </div>
                                         </div>
-                                    )})}</div>
+                                    ))}
                                 </div>
-                            ))}
+                            )}
                         </div>
                     )}
                 </>
